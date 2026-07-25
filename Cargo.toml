@@ -1,0 +1,28 @@
+[package]
+name = "zonex"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zonex Team"]
+description = "Wayland-native Archive Manager with Zero-Latency FUSE Drag-and-Drop"
+
+[dependencies]
+gtk4 = { version = "0.8", features = ["v4_12"] }
+libadwaita = { version = "0.6", features = ["v1_4"] }
+gdk4 = { version = "0.8", features = ["v4_12"] }
+glib = "0.19"
+gio = "0.19"
+zip = "2.2"
+tar = "0.4"
+flate2 = "1.0"
+zstd = "0.13"
+tempfile = "3.10"
+anyhow = "1.0"
+thiserror = "1.0"
+url = "2.5"
+walkdir = "2.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+compress-tools = "0.15"
+# FUSE virtual filesystem for zero-latency Drag OUT streaming
+fuser = "0.14"
+libc = "0.2"

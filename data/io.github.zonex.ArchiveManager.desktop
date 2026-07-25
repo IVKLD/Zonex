@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Zonex
+Comment=Wayland-Native Archive Manager with Zero-Latency Drag-and-Drop
+Exec=zonex %F
+Icon=io.github.zonex.ArchiveManager
+Terminal=false
+Type=Application
+Categories=Utility;Archiving;Compression;GTK;
+MimeType=application/zip;application/x-tar;application/x-compressed-tar;application/x-bzip-compressed-tar;application/x-xz-compressed-tar;application/x-zstd-compressed-tar;application/x-7z-compressed;application/x-rar;
+Keywords=archive;zip;tar;compress;extract;dnd;wayland;
+StartupWMClass=io.github.zonex.ArchiveManager

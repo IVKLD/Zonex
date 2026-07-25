@@ -1,0 +1,21 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# Nix / Direnv
+/result
+/result-*
+.direnv/
+.envrc
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files & logs
+*.log
+*.tmp
