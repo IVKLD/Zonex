@@ -1,12 +1,14 @@
 use crate::archive::ArchiveEntry;
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
-    ReplyOpen, Request, FUSE_ROOT_ID,
+    ReplyOpen, Request,
 };
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
+
+const FUSE_ROOT_ID: u64 = 1;
 use std::time::{Duration, SystemTime};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +60,7 @@ pub struct ArchiveFuseFs {
     nodes: HashMap<u64, FuseNode>,
     next_ino: u64,
     /// Streaming-буферы: inode → SharedBuffer (созданные в open(), читаемые в read())
-    stream_buffers: HashMap<u64, SharedBuffer>,
+    stream_buffers: Mutex<HashMap<u64, SharedBuffer>>,
 }
 
 impl ArchiveFuseFs {
@@ -67,7 +69,7 @@ impl ArchiveFuseFs {
             archive_path,
             nodes: HashMap::new(),
             next_ino: FUSE_ROOT_ID + 1,
-            stream_buffers: HashMap::new(),
+            stream_buffers: Mutex::new(HashMap::new()),
         };
 
         fs.nodes.insert(
@@ -175,9 +177,10 @@ impl ArchiveFuseFs {
 
     /// Запускает фоновый поток извлечения файла.
     /// open() возвращает мгновенно; данные появляются в SharedBuffer по мере извлечения.
-    fn start_streaming(&mut self, ino: u64) -> SharedBuffer {
+    fn start_streaming(&self, ino: u64) -> SharedBuffer {
+        let mut buffers = self.stream_buffers.lock().unwrap();
         // Если стрим уже запущен (или файл уже извлечён) — возвращаем буфер
-        if let Some(existing) = self.stream_buffers.get(&ino) {
+        if let Some(existing) = buffers.get(&ino) {
             return existing.clone();
         }
 
@@ -187,7 +190,8 @@ impl ArchiveFuseFs {
             .and_then(|n| n.archive_entry_path.clone());
 
         let shared: SharedBuffer = Arc::new((Mutex::new(StreamBuffer::default()), Condvar::new()));
-        self.stream_buffers.insert(ino, shared.clone());
+        buffers.insert(ino, shared.clone());
+        drop(buffers);
 
         let archive_path = self.archive_path.clone();
 
@@ -253,9 +257,11 @@ impl ArchiveFuseFs {
         let size = if node.size == 0 {
             // Для файлов с size=0 в заголовке (LibarchiveEngine) пробуем буфер
             self.stream_buffers
-                .get(&ino)
+                .lock()
+                .ok()
                 .and_then(|sb| {
-                    sb.0.lock().ok().map(|b| if b.done { b.data.len() as u64 } else { 0 })
+                    sb.get(&ino)
+                        .and_then(|sb| sb.0.lock().ok().map(|b| if b.done { b.data.len() as u64 } else { 0 }))
                 })
                 .unwrap_or(0)
         } else {
@@ -264,7 +270,7 @@ impl ArchiveFuseFs {
 
         let now = SystemTime::now();
         Some(FileAttr {
-            ino,
+            ino: fuser::INodeNo(ino),
             size,
             blocks: (size + 511) / 512,
             atime: now,
@@ -290,10 +296,10 @@ impl ArchiveFuseFs {
 const TTL: Duration = Duration::from_secs(1);
 
 impl Filesystem for ArchiveFuseFs {
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&self, _req: &Request, parent: fuser::INodeNo, name: &OsStr, reply: ReplyEntry) {
         let name_str = name.to_string_lossy();
 
-        let found = self.nodes.get(&parent).and_then(|p_node| {
+        let found = self.nodes.get(&parent.0).and_then(|p_node| {
             p_node.children.iter().find_map(|&child_ino| {
                 self.nodes
                     .get(&child_ino)
@@ -305,75 +311,60 @@ impl Filesystem for ArchiveFuseFs {
         match found {
             Some(ino) => {
                 if let Some(attr) = self.make_attr(ino) {
-                    reply.entry(&TTL, &attr, 0);
+                    reply.entry(&TTL, &attr, fuser::Generation(0));
                 } else {
-                    reply.error(libc::ENOENT);
+                    reply.error(fuser::Errno::from_i32(libc::ENOENT));
                 }
             }
-            None => reply.error(libc::ENOENT),
+            None => reply.error(fuser::Errno::from_i32(libc::ENOENT)),
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        match self.make_attr(ino) {
+    fn getattr(&self, _req: &Request, ino: fuser::INodeNo, _fh: Option<fuser::FileHandle>, reply: ReplyAttr) {
+        match self.make_attr(ino.0) {
             Some(attr) => reply.attr(&TTL, &attr),
-            None => reply.error(libc::ENOENT),
+            None => reply.error(fuser::Errno::from_i32(libc::ENOENT)),
         }
     }
 
-    /// КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: open() запускает извлечение в фоне и ВОЗВРАЩАЕТ НЕМЕДЛЕННО.
-    /// Файловый менеджер получает ответ за ~0ms и начинает копирование.
-    /// Данные поступают из буфера по мере извлечения.
-    fn open(&mut self, _req: &Request, ino: u64, _flags: i32, reply: ReplyOpen) {
-        // Запускаем фоновое извлечение (или возвращаем уже запущенный буфер)
-        self.start_streaming(ino);
-        // Возвращаем МГНОВЕННО — никакого ожидания!
-        // DIRECT_IO: говорим ядру не кэшировать страницы (мы сами управляем данными)
-        reply.opened(0, fuser::consts::FOPEN_DIRECT_IO);
+    fn open(&self, _req: &Request, ino: fuser::INodeNo, _flags: fuser::OpenFlags, reply: ReplyOpen) {
+        self.start_streaming(ino.0);
+        reply.opened(fuser::FileHandle(0), fuser::FopenFlags::FOPEN_DIRECT_IO);
     }
 
     fn read(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        ino: fuser::INodeNo,
+        _fh: fuser::FileHandle,
+        offset: u64,
         size: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _flags: fuser::OpenFlags,
+        _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyData,
     ) {
+        let ino_u64 = ino.0;
         let offset = offset as usize;
         let end = offset + size as usize;
 
-        // Получаем или создаём SharedBuffer (на случай если open() не был вызван)
-        let shared = if let Some(sb) = self.stream_buffers.get(&ino) {
-            sb.clone()
-        } else {
-            self.start_streaming(ino)
-        };
-
+        let shared = self.start_streaming(ino_u64);
         let (lock, cvar) = &*shared;
 
-        // Ждём пока данных станет достаточно или извлечение завершится
-        // Используем wait_timeout чтобы не зависнуть навечно
         let buf = lock.lock().unwrap();
         let buf = cvar
             .wait_timeout_while(buf, Duration::from_secs(30), |b| {
-                // Продолжаем ждать если: не завершено И данных меньше чем нужно
                 !b.done && b.data.len() < end
             })
             .unwrap()
             .0;
 
         if let Some(ref e) = buf.error {
-            tracing::error!("FUSE read: streaming error for ino {}: {}", ino, e);
-            reply.error(libc::EIO);
+            tracing::error!("FUSE read: streaming error for ino {}: {}", ino_u64, e);
+            reply.error(fuser::Errno::from_i32(libc::EIO));
             return;
         }
 
         if offset >= buf.data.len() {
-            // Запрошенный offset за пределами данных — нормальный EOF
             reply.data(&[]);
         } else {
             let actual_end = end.min(buf.data.len());
@@ -382,17 +373,17 @@ impl Filesystem for ArchiveFuseFs {
     }
 
     fn readdir(
-        &mut self,
+        &self,
         _req: &Request,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        ino: fuser::INodeNo,
+        _fh: fuser::FileHandle,
+        offset: u64,
         mut reply: ReplyDirectory,
     ) {
-        let (self_ino, parent_ino, children_snapshot) = match self.nodes.get(&ino) {
+        let (self_ino, parent_ino, children_snapshot) = match self.nodes.get(&ino.0) {
             Some(node) => (node.ino, node.parent, node.children.clone()),
             None => {
-                reply.error(libc::ENOENT);
+                reply.error(fuser::Errno::from_i32(libc::ENOENT));
                 return;
             }
         };
@@ -409,7 +400,7 @@ impl Filesystem for ArchiveFuseFs {
         }
 
         for (i, (child_ino, kind, name)) in all_entries.iter().enumerate().skip(offset as usize) {
-            if reply.add(*child_ino, (i + 1) as i64, *kind, name) {
+            if reply.add(fuser::INodeNo(*child_ino), (i + 1) as u64, *kind, name) {
                 break;
             }
         }
@@ -417,15 +408,15 @@ impl Filesystem for ArchiveFuseFs {
         reply.ok();
     }
 
-    fn opendir(&mut self, _req: &Request, ino: u64, _flags: i32, reply: ReplyOpen) {
-        if self.nodes.contains_key(&ino) {
-            reply.opened(0, 0);
+    fn opendir(&self, _req: &Request, ino: fuser::INodeNo, _flags: fuser::OpenFlags, reply: ReplyOpen) {
+        if self.nodes.contains_key(&ino.0) {
+            reply.opened(fuser::FileHandle(0), fuser::FopenFlags::empty());
         } else {
-            reply.error(libc::ENOENT);
+            reply.error(fuser::Errno::from_i32(libc::ENOENT));
         }
     }
 
-    fn statfs(&mut self, _req: &Request, _ino: u64, reply: fuser::ReplyStatfs) {
+    fn statfs(&self, _req: &Request, _ino: fuser::INodeNo, reply: fuser::ReplyStatfs) {
         reply.statfs(0, 0, 0, 0, 0, 512, 255, 0);
     }
 }

@@ -4,6 +4,200 @@ use libadwaita::prelude::*;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+pub struct PasswordOverlayWidget {
+    container: gtk4::Box,
+    #[allow(dead_code)]
+    card_box: gtk4::Box,
+    err_label: gtk4::Label,
+    entry: gtk4::PasswordEntry,
+    ok_btn: gtk4::Button,
+    cancel_btn: gtk4::Button,
+    current_verify_fn: Rc<std::cell::RefCell<Option<Rc<dyn Fn(String)>>>>,
+}
+
+impl PasswordOverlayWidget {
+    pub fn new() -> Self {
+        // Semi-transparent backdrop dimmer layer
+        let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        container.set_hexpand(true);
+        container.set_vexpand(true);
+        container.set_halign(gtk4::Align::Fill);
+        container.set_valign(gtk4::Align::Fill);
+        container.add_css_class("password-dialog-scrim");
+        container.set_visible(false);
+
+        // Center card container
+        let center_wrapper = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        center_wrapper.set_hexpand(true);
+        center_wrapper.set_vexpand(true);
+        center_wrapper.set_halign(gtk4::Align::Center);
+        center_wrapper.set_valign(gtk4::Align::Center);
+
+        let card_box = gtk4::Box::new(gtk4::Orientation::Vertical, 14);
+        card_box.add_css_class("password-dialog-card");
+        card_box.set_width_request(360);
+        card_box.set_halign(gtk4::Align::Center);
+        card_box.set_valign(gtk4::Align::Center);
+
+        let lock_icon = gtk4::Image::from_icon_name("dialog-password-symbolic");
+        lock_icon.set_pixel_size(48);
+        lock_icon.set_halign(gtk4::Align::Center);
+        lock_icon.add_css_class("accent");
+
+        let title_label = gtk4::Label::new(Some("Password Required"));
+        title_label.add_css_class("title-1");
+        title_label.set_halign(gtk4::Align::Center);
+
+        let subtitle_label = gtk4::Label::new(Some("Archive is password-protected. Enter password to unlock:"));
+        subtitle_label.add_css_class("body");
+        subtitle_label.add_css_class("dim-label");
+        subtitle_label.set_wrap(true);
+        subtitle_label.set_justify(gtk4::Justification::Center);
+        subtitle_label.set_halign(gtk4::Align::Center);
+
+        let err_label = gtk4::Label::new(None);
+        err_label.add_css_class("error");
+        err_label.set_hexpand(true);
+        err_label.set_halign(gtk4::Align::Center);
+        err_label.set_justify(gtk4::Justification::Center);
+        err_label.set_visible(false);
+
+        let entry = gtk4::PasswordEntry::builder()
+            .placeholder_text("Enter archive password")
+            .show_peek_icon(true)
+            .width_request(280)
+            .halign(gtk4::Align::Center)
+            .build();
+
+        let button_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+        button_box.set_halign(gtk4::Align::Center);
+        button_box.set_margin_top(8);
+
+        let cancel_btn = gtk4::Button::with_label("Cancel");
+        cancel_btn.set_width_request(110);
+
+        let ok_btn = gtk4::Button::with_label("Unlock");
+        ok_btn.add_css_class("suggested-action");
+        ok_btn.set_width_request(110);
+
+        button_box.append(&cancel_btn);
+        button_box.append(&ok_btn);
+
+        card_box.append(&lock_icon);
+        card_box.append(&title_label);
+        card_box.append(&subtitle_label);
+        card_box.append(&err_label);
+        card_box.append(&entry);
+        card_box.append(&button_box);
+
+        center_wrapper.append(&card_box);
+        container.append(&center_wrapper);
+
+        let current_verify_fn: Rc<std::cell::RefCell<Option<Rc<dyn Fn(String)>>>> =
+            Rc::new(std::cell::RefCell::new(None));
+
+        let current_fn_c = current_verify_fn.clone();
+        let entry_c = entry.clone();
+        let submit_action = move || {
+            let pwd = entry_c.text().to_string();
+            if let Some(ref verify) = *current_fn_c.borrow() {
+                verify(pwd);
+            }
+        };
+
+        let submit_c1 = Rc::new(submit_action);
+        let submit_c2 = submit_c1.clone();
+
+        entry.connect_activate(move |_| {
+            submit_c1();
+        });
+
+        ok_btn.connect_clicked(move |_| {
+            submit_c2();
+        });
+
+        let container_c = container.clone();
+        cancel_btn.connect_clicked(move |_| {
+            container_c.set_visible(false);
+        });
+
+        Self {
+            container,
+            card_box,
+            err_label,
+            entry,
+            ok_btn,
+            cancel_btn,
+            current_verify_fn,
+        }
+    }
+
+    pub fn widget(&self) -> &gtk4::Box {
+        &self.container
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.container.is_visible()
+    }
+
+    pub fn prompt<F>(&self, verify_fn: F)
+    where
+        F: Fn(String, Rc<dyn Fn(bool, &str)>) + 'static,
+    {
+        self.err_label.set_visible(false);
+        self.err_label.set_text("");
+        self.entry.set_text("");
+        self.container.set_visible(true);
+        self.entry.grab_focus();
+
+        let verify_fn_rc = Rc::new(verify_fn);
+        let err_lbl_c = self.err_label.clone();
+        let entry_c = self.entry.clone();
+        let container_c = self.container.clone();
+        let ok_btn_c = self.ok_btn.clone();
+        let cancel_btn_c = self.cancel_btn.clone();
+
+        let verify_wrapper = move |pwd: String| {
+            if pwd.is_empty() {
+                err_lbl_c.set_text("Please enter a password");
+                err_lbl_c.set_visible(true);
+                return;
+            }
+
+            ok_btn_c.set_sensitive(false);
+            cancel_btn_c.set_sensitive(false);
+
+            let err_lbl_cb = err_lbl_c.clone();
+            let entry_cb = entry_c.clone();
+            let container_cb = container_c.clone();
+            let ok_btn_cb = ok_btn_c.clone();
+            let cancel_btn_cb = cancel_btn_c.clone();
+
+            let on_done = Rc::new(move |success: bool, err_msg: &str| {
+                ok_btn_cb.set_sensitive(true);
+                cancel_btn_cb.set_sensitive(true);
+
+                if success {
+                    container_cb.set_visible(false);
+                } else {
+                    err_lbl_cb.set_text(if err_msg.is_empty() {
+                        "❌ Incorrect password. Please try another password."
+                    } else {
+                        err_msg
+                    });
+                    err_lbl_cb.set_visible(true);
+                    entry_cb.grab_focus();
+                    entry_cb.select_region(0, -1);
+                }
+            });
+
+            verify_fn_rc(pwd, on_done);
+        };
+
+        *self.current_verify_fn.borrow_mut() = Some(Rc::new(verify_wrapper));
+    }
+}
+
 pub struct Dialogs;
 
 impl Dialogs {
@@ -199,14 +393,6 @@ impl Dialogs {
         source_paths: &[PathBuf],
         callback: F,
     ) {
-        let file_chooser = gtk4::FileChooserNative::new(
-            Some("Create Archive"),
-            Some(parent),
-            gtk4::FileChooserAction::Save,
-            Some("Create"),
-            Some("Cancel"),
-        );
-
         let default_name = if let Some(first) = source_paths.first() {
             if let Some(name) = first.file_name() {
                 format!("{}.zip", name.to_string_lossy())
@@ -217,37 +403,39 @@ impl Dialogs {
             "archive.zip".to_string()
         };
 
-        file_chooser.set_current_name(&default_name);
-
         let zip_filter = gtk4::FileFilter::new();
         zip_filter.set_name(Some("Zip Archive (*.zip)"));
         zip_filter.add_pattern("*.zip");
-        file_chooser.add_filter(&zip_filter);
 
         let tar_gz_filter = gtk4::FileFilter::new();
         tar_gz_filter.set_name(Some("Tar Gzip Archive (*.tar.gz)"));
         tar_gz_filter.add_pattern("*.tar.gz");
-        file_chooser.add_filter(&tar_gz_filter);
 
         let tar_zst_filter = gtk4::FileFilter::new();
         tar_zst_filter.set_name(Some("Tar Zstd Archive (*.tar.zst)"));
         tar_zst_filter.add_pattern("*.tar.zst");
-        file_chooser.add_filter(&tar_zst_filter);
+
+        let filters = gio::ListStore::new::<gtk4::FileFilter>();
+        filters.append(&zip_filter);
+        filters.append(&tar_gz_filter);
+        filters.append(&tar_zst_filter);
+
+        let dialog = gtk4::FileDialog::builder()
+            .title("Create Archive")
+            .initial_name(&default_name)
+            .filters(&filters)
+            .build();
 
         let cb = std::cell::RefCell::new(Some(callback));
-        file_chooser.connect_response(move |dialog, response| {
-            if response == gtk4::ResponseType::Accept {
-                if let Some(file) = dialog.file() {
-                    if let Some(path) = file.path() {
-                        if let Some(cb_fn) = cb.borrow_mut().take() {
-                            cb_fn(path, "zip".to_string());
-                        }
+        dialog.save(Some(parent), gio::Cancellable::NONE, move |res| {
+            if let Ok(file) = res {
+                if let Some(path) = file.path() {
+                    if let Some(cb_fn) = cb.borrow_mut().take() {
+                        cb_fn(path, "zip".to_string());
                     }
                 }
             }
         });
-
-        file_chooser.show();
     }
 
     /// Shows a dialog displaying entry properties (name, path, size, type)

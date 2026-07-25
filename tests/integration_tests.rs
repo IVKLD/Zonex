@@ -3,7 +3,8 @@ use zonex::archive::tar_engine::{TarCompression, TarEngine};
 
 use zonex::archive::{ArchiveEngine, ArchiveEntry, ArchiveManager};
 use zonex::fuse::ArchiveFuseFs;
-use fuser::{FileType, FUSE_ROOT_ID};
+use fuser::FileType;
+const FUSE_ROOT_ID: u64 = 1;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};

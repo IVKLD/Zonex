@@ -47,15 +47,11 @@ impl FuseMountManager {
 
         let fs = ArchiveFuseFs::new(archive_path.clone(), entries);
 
-        let options = vec![
-            MountOption::RO, // Read-only — архиватор не пишет через FUSE
-            // НЕ используем AutoUnmount: fuser добавляет к нему allow_other,
-            // которому нужен user_allow_other=true в /etc/fuse.conf → EPERM.
-            // BackgroundSession::drop() вызывает unmount при нормальном завершении.
-            MountOption::FSName(format!("zonex:{}", archive_stem)),
-        ];
+        let mut config = fuser::Config::default();
+        config.mount_options.push(MountOption::RO);
+        config.mount_options.push(MountOption::FSName(format!("zonex:{}", archive_stem)));
 
-        let session = fuser::spawn_mount2(fs, &mount_path, &options)
+        let session = fuser::spawn_mount(fs, &mount_path, &config)
             .map_err(|e| anyhow::anyhow!("FUSE mount failed: {}. Is libfuse3 installed?", e))?;
 
         tracing::info!("FUSE: session started successfully at '{}'", mount_path.display());

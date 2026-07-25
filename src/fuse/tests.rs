@@ -2,8 +2,10 @@
 mod tests {
     use crate::archive::ArchiveEntry;
     use crate::fuse::archive_fs::ArchiveFuseFs;
-    use fuser::{FileType, FUSE_ROOT_ID};
+    use fuser::FileType;
     use std::path::PathBuf;
+
+    const FUSE_ROOT_ID: u64 = 1;
 
     #[test]
     fn test_fuse_tree_construction_and_permissions() {

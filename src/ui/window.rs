@@ -5,10 +5,8 @@ use crate::dnd::{setup_drag_source, setup_drop_target};
 use crate::utils::TempCache;
 use gtk4::gio;
 use gtk4::prelude::*;
-#[allow(deprecated)]
 use gtk4::{
-    gdk, Box as GtkBox, Button, EventControllerKey, FileChooserAction, FileChooserNative,
-    Orientation, ResponseType, Spinner,
+    gdk, Box as GtkBox, Button, EventControllerKey, Orientation, Spinner,
 };
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -46,6 +44,28 @@ impl ZonexWindow {
             if local_icon_dir.exists() {
                 icon_theme.add_search_path(local_icon_dir);
             }
+
+            let provider = gtk4::CssProvider::new();
+            provider.load_from_string(
+                "
+                .password-dialog-scrim {
+                    background-color: rgba(0, 0, 0, 0.55);
+                }
+                .password-dialog-card {
+                    background-color: @dialog_bg_color;
+                    color: @dialog_fg_color;
+                    border-radius: 16px;
+                    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    padding: 24px;
+                }
+                "
+            );
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
         }
 
         let toast_overlay = adw::ToastOverlay::new();
@@ -81,7 +101,13 @@ impl ZonexWindow {
         let status_bar = Rc::new(StatusBar::new());
         main_box.append(status_bar.widget());
 
-        toast_overlay.set_child(Some(&main_box));
+        let window_overlay = gtk4::Overlay::new();
+        window_overlay.set_child(Some(&main_box));
+
+        let pwd_overlay = Rc::new(crate::ui::dialogs::PasswordOverlayWidget::new());
+        window_overlay.add_overlay(pwd_overlay.widget());
+
+        toast_overlay.set_child(Some(&window_overlay));
         window.set_content(Some(&toast_overlay));
 
         // Вспомогательная функция отображения Toast
@@ -126,31 +152,20 @@ impl ZonexWindow {
         let window_new = window.clone();
         let action_new_archive = gio::SimpleAction::new("new_archive", None);
         action_new_archive.connect_activate(move |_, _| {
-            #[allow(deprecated)]
-            let file_chooser = FileChooserNative::new(
-                Some("Create New Archive"),
-                Some(&window_new),
-                FileChooserAction::Save,
-                Some("Create"),
-                Some("Cancel"),
-            );
-            file_chooser.set_current_name("archive.zip");
+            let dialog = gtk4::FileDialog::builder()
+                .title("Create New Archive")
+                .initial_name("archive.zip")
+                .build();
 
-            file_chooser.connect_response(move |dialog, response| {
-                if response == ResponseType::Accept {
-                    if let Some(file) = dialog.file() {
-                        if let Some(path) = file.path() {
-                            let file_path = path.clone();
-                            thread::spawn(move || {
-                                let _ = std::fs::File::create(&file_path);
-                            });
-                        }
+            dialog.save(Some(&window_new), gio::Cancellable::NONE, move |res| {
+                if let Ok(file) = res {
+                    if let Some(path) = file.path() {
+                        thread::spawn(move || {
+                            let _ = std::fs::File::create(&path);
+                        });
                     }
                 }
-                dialog.destroy();
             });
-
-            file_chooser.show();
         });
         window.add_action(&action_new_archive);
 
@@ -344,69 +359,60 @@ impl ZonexWindow {
                 return;
             }
 
-            #[allow(deprecated)]
-            let dialog = FileChooserNative::new(
-                Some("Select Destination Folder"),
-                Some(&window_extract),
-                FileChooserAction::SelectFolder,
-                Some("Extract Here"),
-                Some("Cancel"),
-            );
+            let dialog = gtk4::FileDialog::builder()
+                .title("Select Destination Folder")
+                .build();
 
             let mgr_task = manager_extract.clone();
             let sl_task = set_loading_extract.clone();
             let toast_task = show_toast_extract.clone();
             let selected_task = selected_paths.clone();
 
-            dialog.connect_response(move |d, response| {
-                if response == ResponseType::Accept {
-                    if let Some(file) = d.file() {
-                        if let Some(dest_dir) = file.path() {
-                            sl_task(true, "Extracting selected files...");
-                            let (tx, rx) = mpsc::channel::<Result<usize, String>>();
+            dialog.select_folder(Some(&window_extract), gio::Cancellable::NONE, move |res| {
+                if let Ok(file) = res {
+                    if let Some(dest_dir) = file.path() {
+                        sl_task(true, "Extracting selected files...");
+                        let (tx, rx) = mpsc::channel::<Result<usize, String>>();
 
-                            let mgr_c = mgr_task.clone();
-                            let sel_c = selected_task.clone();
-                            let dest_c = dest_dir.clone();
+                        let mgr_c = mgr_task.clone();
+                        let sel_c = selected_task.clone();
+                        let dest_c = dest_dir.clone();
+                        let dest_toast = dest_dir.clone();
 
-                            thread::spawn(move || {
-                                let mgr = mgr_c.lock().unwrap_or_else(|e| e.into_inner());
-                                match mgr.extract_selected(&sel_c, &dest_c) {
-                                    Ok(extracted) => {
-                                        let _ = tx.send(Ok(extracted.len()));
+                        thread::spawn(move || {
+                            let mgr = mgr_c.lock().unwrap_or_else(|e| e.into_inner());
+                            match mgr.extract_selected(&sel_c, &dest_c) {
+                                Ok(extracted) => {
+                                    let _ = tx.send(Ok(extracted.len()));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Err(e.to_string()));
+                                }
+                            }
+                        });
+
+                        let sl_res = sl_task.clone();
+                        let toast_res = toast_task.clone();
+
+                        glib::timeout_add_local(Duration::from_millis(16), move || {
+                            if let Ok(res) = rx.try_recv() {
+                                sl_res(false, "Extraction finished");
+                                match res {
+                                    Ok(n) => {
+                                        toast_res(&format!("Extracted {} item(s) to {}", n, dest_toast.display()));
                                     }
                                     Err(e) => {
-                                        let _ = tx.send(Err(e.to_string()));
+                                        toast_res(&format!("Failed to extract: {}", e));
                                     }
                                 }
-                            });
-
-                            let sl_res = sl_task.clone();
-                            let toast_res = toast_task.clone();
-
-                            glib::timeout_add_local(Duration::from_millis(16), move || {
-                                if let Ok(res) = rx.try_recv() {
-                                    sl_res(false, "Extraction finished");
-                                    match res {
-                                        Ok(n) => {
-                                            toast_res(&format!("Extracted {} file(s) to {}", n, dest_dir.display()));
-                                        }
-                                        Err(e) => {
-                                            toast_res(&format!("Failed to extract: {}", e));
-                                        }
-                                    }
-                                    glib::ControlFlow::Break
-                                } else {
-                                    glib::ControlFlow::Continue
-                                }
-                            });
-                        }
+                                glib::ControlFlow::Break
+                            } else {
+                                glib::ControlFlow::Continue
+                            }
+                        });
                     }
                 }
-                d.destroy();
             });
-
-            dialog.show();
         });
         window.add_action(&action_extract_selected);
 
@@ -426,24 +432,17 @@ impl ZonexWindow {
             }
             drop(mgr_check);
 
-            #[allow(deprecated)]
-            let dialog = FileChooserNative::new(
-                Some("Add Files to Archive"),
-                Some(&window_add),
-                FileChooserAction::Open,
-                Some("Add"),
-                Some("Cancel"),
-            );
-            dialog.set_select_multiple(true);
+            let dialog = gtk4::FileDialog::builder()
+                .title("Add Files to Archive")
+                .build();
 
             let mgr_task = manager_add.clone();
             let fv_task = file_view_add.clone();
             let sl_task = set_loading_add.clone();
             let toast_task = show_toast_add.clone();
 
-            dialog.connect_response(move |d, response| {
-                if response == ResponseType::Accept {
-                    let files = d.files();
+            dialog.open_multiple(Some(&window_add), gio::Cancellable::NONE, move |res| {
+                if let Ok(files) = res {
                     let mut paths = Vec::new();
                     for i in 0..files.n_items() {
                         if let Some(file) = files.item(i).and_downcast::<gio::File>() {
@@ -462,32 +461,38 @@ impl ZonexWindow {
 
                         thread::spawn(move || {
                             let mut mgr = mgr_c.lock().unwrap_or_else(|e| e.into_inner());
+                            let msg;
+                            let success;
+                            let mut visible = Vec::new();
+                            let mut curr_dir = PathBuf::new();
+
                             match mgr.add_files(&paths_c) {
                                 Ok(()) => {
-                                    let visible = mgr.visible_entries();
-                                    let folder = mgr.current_folder().to_path_buf();
-                                    let msg = format!("Added {} item(s) to archive", paths_c.len());
-                                    let _ = tx.send((visible, folder, msg, true));
+                                    visible = mgr.visible_entries();
+                                    curr_dir = mgr.current_folder().to_path_buf();
+                                    msg = format!("Added {} item(s) to archive", paths_c.len());
+                                    success = true;
                                 }
                                 Err(e) => {
-                                    let msg = format!("Error adding files: {}", e);
-                                    let _ = tx.send((Vec::new(), PathBuf::new(), msg, false));
+                                    msg = format!("Failed to add items: {}", e);
+                                    success = false;
                                 }
                             }
+
+                            let _ = tx.send((visible, curr_dir, msg, success));
                         });
 
-                        let fv_res = fv_task.clone();
-                        let sl_res = sl_task.clone();
-                        let toast_res = toast_task.clone();
-
+                        let sl_task_c = sl_task.clone();
+                        let fv_task_c = fv_task.clone();
+                        let toast_task_c = toast_task.clone();
                         glib::timeout_add_local(Duration::from_millis(16), move || {
-                            if let Ok((entries, folder, msg, success)) = rx.try_recv() {
-                                sl_res(false, &msg);
+                            if let Ok((visible, curr_dir, msg, success)) = rx.try_recv() {
+                                sl_task_c(false, &msg);
                                 if success {
-                                    fv_res.set_entries(entries);
-                                    fv_res.update_folder_path(&folder);
+                                    fv_task_c.set_entries(visible);
+                                    fv_task_c.update_folder_path(&curr_dir);
                                 }
-                                toast_res(&msg);
+                                toast_task_c(&msg);
                                 glib::ControlFlow::Break
                             } else {
                                 glib::ControlFlow::Continue
@@ -495,10 +500,7 @@ impl ZonexWindow {
                         });
                     }
                 }
-                d.destroy();
             });
-
-            dialog.show();
         });
         window.add_action(&action_add_files);
 
@@ -772,8 +774,7 @@ impl ZonexWindow {
         let temp_cache_open = temp_cache.clone();
         let window_open = window.clone();
 
-        let is_prompting_password = Rc::new(std::cell::Cell::new(false));
-        let prompting_cell = is_prompting_password.clone();
+        let pwd_overlay_open = pwd_overlay.clone();
 
         let do_open_path_with_pwd = move |path: PathBuf, password: Option<String>, _was_wrong_pwd: bool| {
             set_loading_open(true, "Opening archive (mounting FUSE...)");
@@ -784,7 +785,8 @@ impl ZonexWindow {
             let fv_task = file_view_open.clone();
             let sl_task = set_loading_open.clone();
             let toast_task = show_toast_open.clone();
-            let window_task = window_open.clone();
+            let _window_task = window_open.clone();
+            let pwd_overlay_task = pwd_overlay_open.clone();
 
             let (tx, rx) = mpsc::channel::<(
                 Vec<crate::archive::ArchiveEntry>,
@@ -828,12 +830,9 @@ impl ZonexWindow {
                 let _ = tx.send((entries_res, msg, success, duration, has_fuse, path_task));
             });
 
-            let prompting_retry = prompting_cell.clone();
-
             glib::timeout_add_local(Duration::from_millis(16), move || {
                 if let Ok((entries, msg, success, duration, has_fuse, open_p)) = rx.try_recv() {
                     if success {
-                        prompting_retry.set(false);
                         let status_suffix = if has_fuse { " [FUSE]" } else { " [tmpfs]" };
                         sl_task(false, &format!("{}{}", msg, status_suffix));
                         fv_task.set_entries(entries);
@@ -846,27 +845,20 @@ impl ZonexWindow {
                         toast_task(&format!("{} ({:.2}s) — {}", msg, duration, dnd_info));
                     } else {
                         sl_task(false, "Password required or invalid format");
-                        use crate::ui::dialogs::Dialogs;
 
-                        if !prompting_retry.get() {
-                            prompting_retry.set(true);
+                        if !pwd_overlay_task.is_visible() {
                             let mgr_verify = mgr_verify_base.clone();
                             let fv_verify = fv_task.clone();
                             let sl_verify = sl_task.clone();
                             let toast_verify = toast_task.clone();
                             let open_path_target = open_p.clone();
-                            let prompting_cb = prompting_retry.clone();
 
-                            Dialogs::prompt_password_verify(
-                                &window_task,
-                                "Archive is password-protected. Enter password to unlock:",
-                                move |pwd_input: String, on_done| {
+                            pwd_overlay_task.prompt(move |pwd_input: String, on_done| {
                                     let mgr_v = mgr_verify.clone();
                                     let fv_v = fv_verify.clone();
                                     let sl_v = sl_verify.clone();
                                     let toast_v = toast_verify.clone();
                                     let path_v = open_path_target.clone();
-                                    let p_cb = prompting_cb.clone();
                                     let on_done_cb = on_done.clone();
 
                                     let (tx, rx) = mpsc::channel::<(
@@ -909,8 +901,7 @@ impl ZonexWindow {
 
                                     glib::timeout_add_local(Duration::from_millis(16), move || {
                                         if let Ok((entries, msg, success, duration, has_fuse)) = rx.try_recv() {
-                                            if success {
-                                                p_cb.set(false);
+                                             if success {
                                                 let status_suffix = if has_fuse { " [FUSE]" } else { " [tmpfs]" };
                                                 sl_v(false, &format!("{}{}", msg, status_suffix));
                                                 fv_v.set_entries(entries);
@@ -1146,31 +1137,21 @@ impl ZonexWindow {
         let open_btn_do = do_open_rc.clone();
         let fv_root = file_view.clone();
 
-        #[allow(deprecated)]
         open_btn.connect_clicked(move |_| {
             if let Some(root_window) = fv_root.widget().root() {
                 let window = root_window.downcast_ref::<gtk4::Window>().unwrap();
-                let dialog = FileChooserNative::new(
-                    Some("Open Archive"),
-                    Some(window),
-                    FileChooserAction::Open,
-                    Some("Open"),
-                    Some("Cancel"),
-                );
+                let dialog = gtk4::FileDialog::builder()
+                    .title("Open Archive")
+                    .build();
 
                 let do_open_c = open_btn_do.clone();
-                dialog.connect_response(move |d, response| {
-                    if response == ResponseType::Accept {
-                        if let Some(file) = d.file() {
-                            if let Some(path) = file.path() {
-                                do_open_c(path);
-                            }
+                dialog.open(Some(window), gio::Cancellable::NONE, move |res| {
+                    if let Ok(file) = res {
+                        if let Some(path) = file.path() {
+                            do_open_c(path);
                         }
                     }
-                    d.destroy();
                 });
-
-                dialog.show();
             }
         });
 

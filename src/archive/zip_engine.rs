@@ -674,7 +674,7 @@ impl ArchiveEngine for ZipEngine {
 
             let options = SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
-                .with_deprecated_encryption(password.as_bytes());
+                .with_deprecated_encryption(password.as_bytes())?;
 
             let mut buf = vec![0u8; BUFFER_SIZE];
 
