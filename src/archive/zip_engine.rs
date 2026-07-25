@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+use zip::unstable::write::FileOptionsExt;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
@@ -318,17 +319,38 @@ impl ZipEngine {
 
 impl ArchiveEngine for ZipEngine {
     fn list_entries(&self, archive_path: &Path) -> Result<Vec<ArchiveEntry>> {
+        self.list_entries_with_password(archive_path, None)
+    }
+
+    fn list_entries_with_password(
+        &self,
+        archive_path: &Path,
+        password: Option<&str>,
+    ) -> Result<Vec<ArchiveEntry>> {
         let file = File::open(archive_path).context("Failed to open zip file")?;
 
-        // Try standard ZipArchive reader first
         match ZipArchive::new(file) {
             Ok(mut zip) => {
                 let mut entries = Vec::new();
+                let mut is_encrypted_archive = false;
+
                 for i in 0..zip.len() {
-                    let file = match zip.by_index(i) {
-                        Ok(file) => file,
-                        Err(_) => continue,
+                    let file_res = match password {
+                        Some(pwd) => zip.by_index_decrypt(i, pwd.as_bytes()),
+                        None => zip.by_index(i),
                     };
+
+                    let file = match file_res {
+                        Ok(f) => f,
+                        Err(err) => {
+                            tracing::warn!("Failed to read zip index {} (password error?): {:?}", i, err);
+                            return Err(anyhow!("Archive is encrypted or invalid password"));
+                        }
+                    };
+
+                    if file.encrypted() {
+                        is_encrypted_archive = true;
+                    }
 
                     let is_dir = file.is_dir();
                     let entry_name = file
@@ -340,6 +362,11 @@ impl ArchiveEngine for ZipEngine {
                     entry.compressed_size = Some(file.compressed_size());
                     entries.push(entry);
                 }
+
+                if is_encrypted_archive && password.is_none() {
+                    return Err(anyhow!("Archive is encrypted: Password required"));
+                }
+
                 Ok(entries)
             }
             Err(err) => {
@@ -348,7 +375,6 @@ impl ArchiveEngine for ZipEngine {
                     archive_path.display(),
                     err
                 );
-                // Resilient fallback for truncated / corrupt EOCD / GitHub zip archives
                 self.scan_local_headers(archive_path)
             }
         }
@@ -629,5 +655,57 @@ impl ArchiveEngine for ZipEngine {
             ok_files,
             failed_files,
         })
+    }
+
+    fn encrypt_archive(&self, archive_path: &Path, password: &str) -> Result<()> {
+        if password.is_empty() {
+            return Ok(());
+        }
+
+        let temp_archive_path = archive_path.with_extension("tmp_enc_zip");
+
+        {
+            let src_file = File::open(archive_path)?;
+            let mut zip_in = ZipArchive::new(src_file)?;
+
+            let out_file = File::create(&temp_archive_path)?;
+            let out_buf = BufWriter::with_capacity(BUFFER_SIZE, out_file);
+            let mut zip_out = ZipWriter::new(out_buf);
+
+            let options = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .with_deprecated_encryption(password.as_bytes());
+
+            let mut buf = vec![0u8; BUFFER_SIZE];
+
+            for i in 0..zip_in.len() {
+                let mut zip_file = match zip_in.by_index(i) {
+                    Ok(file) => file,
+                    Err(_) => continue,
+                };
+
+                let safe_name = zip_file
+                    .enclosed_name()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| zip_file.name().to_string());
+
+                if zip_file.is_dir() {
+                    zip_out.add_directory(safe_name, options)?;
+                } else {
+                    zip_out.start_file(safe_name, options)?;
+                    while let Ok(n) = zip_file.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                        zip_out.write_all(&buf[..n])?;
+                    }
+                }
+            }
+
+            zip_out.finish()?;
+        }
+
+        fs::rename(&temp_archive_path, archive_path)?;
+        Ok(())
     }
 }

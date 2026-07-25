@@ -204,3 +204,67 @@ fn test_archive_deletion_and_integrity_check() {
     assert!(report.failed_files.is_empty());
 }
 
+/// Integration Test 6: Deleting an entry in a nested subfolder preserves the current folder path
+#[test]
+fn test_nested_deletion_preserves_current_folder() {
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    let dir = tempdir().unwrap();
+    let zip_path = dir.path().join("nested_del.zip");
+
+    {
+        let file = File::create(&zip_path).unwrap();
+        let mut zip = ZipWriter::new(file);
+
+        zip.start_file("folder/file1.txt", SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"1").unwrap();
+        zip.start_file("folder/file2.txt", SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"2").unwrap();
+        zip.finish().unwrap();
+    }
+
+    let mut mgr = ArchiveManager::new();
+    mgr.open_archive(&zip_path).unwrap();
+    mgr.enter_folder(PathBuf::from("folder"));
+    assert_eq!(mgr.current_folder(), Path::new("folder"));
+
+    // Delete 'folder/file1.txt'
+    mgr.delete_selected_entries(&[PathBuf::from("folder/file1.txt")]).unwrap();
+
+    // Verify current_folder is still 'folder' and NOT reset to root
+    assert_eq!(mgr.current_folder(), Path::new("folder"));
+    let visible = mgr.visible_entries();
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].path, Path::new("folder/file2.txt"));
+}
+
+/// Integration Test 7: Encrypting an open archive with a password
+#[test]
+fn test_encrypt_open_archive_with_password() {
+    let dir = tempdir().unwrap();
+    let zip_path = dir.path().join("plain.zip");
+
+    let file1 = dir.path().join("secret.txt");
+    fs::write(&file1, "Secret Content 12345").unwrap();
+
+    let mut mgr = ArchiveManager::new();
+    mgr.create_archive(&zip_path, &[file1.clone()]).unwrap();
+
+    // Encrypt archive with password
+    mgr.encrypt_archive("my_secret_pass").unwrap();
+
+    // Opening without password must fail with password requirement
+    let open_no_pwd = mgr.open_archive_with_password(&zip_path, None);
+    assert!(open_no_pwd.is_err());
+
+    // Opening with password succeeds
+    let open_with_pwd = mgr.open_archive_with_password(&zip_path, Some("my_secret_pass")).unwrap();
+    assert_eq!(open_with_pwd.len(), 1);
+
+    // Integrity check with correct password passes
+    let report = mgr.verify_integrity(Some("my_secret_pass")).unwrap();
+    assert_eq!(report.ok_files, 1);
+    assert!(report.failed_files.is_empty());
+}
+

@@ -176,13 +176,18 @@ impl ArchiveManager {
     }
 
     pub fn open_archive(&mut self, path: &Path) -> Result<Vec<ArchiveEntry>> {
-        tracing::info!("Attempting to open archive: {}", path.display());
+        self.open_archive_with_password(path, None)
+    }
+
+    pub fn open_archive_with_password(&mut self, path: &Path, password: Option<&str>) -> Result<Vec<ArchiveEntry>> {
+        tracing::info!("Attempting to open archive: {} (password: {})", path.display(), password.is_some());
 
         let engines = self.get_ordered_engines(path);
         let mut last_err = anyhow!("Failed to open archive: Unsupported format or corrupted file");
 
         for (i, engine) in engines.into_iter().enumerate() {
-            match engine.list_entries(path) {
+            let res = engine.list_entries_with_password(path, password);
+            match res {
                 Ok(entries) => {
                     tracing::info!(
                         "Successfully opened archive {} using engine option #{}. Total entries: {}",
@@ -197,8 +202,6 @@ impl ArchiveManager {
                     self.history_forward.clear();
                     self.active_engine_index = i;
 
-                    // Монтируем FUSE-ФС в фоне. Если недоступен libfuse3 — graceful fallback.
-                    // Drop старого монтирования произойдёт автоматически до присвоения нового.
                     self.fuse_mount = None;
                     match FuseMountManager::mount(path.to_path_buf(), &self.all_entries) {
                         Ok(mount) => {
@@ -220,6 +223,10 @@ impl ArchiveManager {
                     return Ok(self.visible_entries());
                 }
                 Err(err) => {
+                    let err_msg = err.to_string();
+                    if err_msg.contains("Password required") || err_msg.contains("encrypted") {
+                        return Err(err);
+                    }
                     tracing::warn!("Engine option #{} failed for {}: {:?}", i, path.display(), err);
                     last_err = err;
                 }
@@ -331,6 +338,7 @@ impl ArchiveManager {
             .current_path
             .as_ref()
             .ok_or_else(|| anyhow!("No archive is currently open"))?;
+        let saved_folder = self.current_folder.clone();
         tracing::info!(
             "Deleting {} selected entry(ies) from {}",
             entry_paths.len(),
@@ -345,6 +353,15 @@ impl ArchiveManager {
         engine.delete_entries(current, entry_paths)?;
         let path = current.clone();
         self.open_archive(&path)?;
+
+        if !saved_folder.as_os_str().is_empty() && !self.all_entries.iter().any(|e| e.path.starts_with(&saved_folder)) {
+            let mut parent = saved_folder;
+            parent.pop();
+            self.current_folder = parent;
+        } else {
+            self.current_folder = saved_folder;
+        }
+
         Ok(())
     }
 
@@ -366,6 +383,7 @@ impl ArchiveManager {
             .current_path
             .as_ref()
             .ok_or_else(|| anyhow!("No archive is open to add files to"))?;
+        let saved_folder = self.current_folder.clone();
         tracing::info!("Adding {} file(s) to open archive {}", files.len(), current.display());
         let engines = self.get_ordered_engines(current);
         let engine = engines
@@ -374,6 +392,27 @@ impl ArchiveManager {
         engine.add_entries(current, files)?;
         let path = current.clone();
         self.open_archive(&path)?;
+        self.current_folder = saved_folder;
+        Ok(())
+    }
+
+    pub fn encrypt_archive(&mut self, password: &str) -> Result<()> {
+        let current = self
+            .current_path
+            .as_ref()
+            .ok_or_else(|| anyhow!("No archive is currently open"))?;
+        let saved_folder = self.current_folder.clone();
+        tracing::info!("Encrypting open archive {}", current.display());
+
+        let engines = self.get_ordered_engines(current);
+        let engine = engines
+            .get(self.active_engine_index)
+            .ok_or_else(|| anyhow!("No active engine available for encryption"))?;
+
+        engine.encrypt_archive(current, password)?;
+        let path = current.clone();
+        self.open_archive_with_password(&path, Some(password))?;
+        self.current_folder = saved_folder;
         Ok(())
     }
 }

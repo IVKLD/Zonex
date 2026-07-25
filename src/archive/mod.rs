@@ -26,6 +26,15 @@ pub trait ArchiveEngine: Send + Sync {
     /// Returns the list of all entries inside the archive
     fn list_entries(&self, archive_path: &Path) -> Result<Vec<ArchiveEntry>>;
 
+    /// Returns the list of all entries inside the archive with password support
+    fn list_entries_with_password(
+        &self,
+        archive_path: &Path,
+        _password: Option<&str>,
+    ) -> Result<Vec<ArchiveEntry>> {
+        self.list_entries(archive_path)
+    }
+
     /// Extracts specific entries or all files to target directory
     fn extract_entries(
         &self,
@@ -56,5 +65,11 @@ pub trait ArchiveEngine: Send + Sync {
 
     /// Verifies checksums and readability of all entries in the archive
     fn verify_integrity(&self, archive_path: &Path, password: Option<&str>) -> Result<IntegrityReport>;
+
+    /// Encrypts/protects all entries in the archive with a password
+    fn encrypt_archive(&self, archive_path: &Path, password: &str) -> Result<()> {
+        let _ = (archive_path, password);
+        anyhow::bail!("Encryption not supported for this archive engine")
+    }
 }
 

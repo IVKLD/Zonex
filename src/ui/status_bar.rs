@@ -19,6 +19,9 @@ impl StatusBar {
         let status_label = Label::new(Some("Ready (Drop files to open or create archive)"));
         status_label.set_hexpand(true);
         status_label.set_xalign(0.0);
+        status_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        status_label.set_width_chars(1);
+        status_label.set_max_width_chars(1);
 
         let progress_bar = ProgressBar::new();
         progress_bar.set_visible(false);
@@ -40,6 +43,7 @@ impl StatusBar {
 
     pub fn set_text(&self, text: &str) {
         self.status_label.set_text(text);
+        self.status_label.set_tooltip_text(Some(text));
     }
 
     #[allow(dead_code)]

@@ -134,10 +134,13 @@ impl FileView {
         path_label.add_css_class("title-4");
         path_label.set_xalign(0.0);
         path_label.set_hexpand(true);
+        path_label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+        path_label.set_width_chars(1);
+        path_label.set_max_width_chars(1);
 
         let search_entry = SearchEntry::new();
         search_entry.set_placeholder_text(Some("Search files..."));
-        search_entry.set_width_request(180);
+        search_entry.set_width_request(120);
 
         let sort_options = &[
             "Folders First",
@@ -164,13 +167,29 @@ impl FileView {
         list_box.set_activate_on_single_click(false);
         list_box.add_css_class("rich-list");
 
-        // Create Context Menu (PopoverMenu)
+        // Create Context Menu (PopoverMenu) with Logical Grouping
         let menu_model = gio::Menu::new();
-        menu_model.append(Some("Open / Enter"), Some("win.open_entry"));
-        menu_model.append(Some("Extract Selected..."), Some("win.extract_selected"));
-        menu_model.append(Some("Add Files..."), Some("win.add_files"));
-        menu_model.append(Some("Select All"), Some("win.select_all"));
-        menu_model.append(Some("Deselect All"), Some("win.deselect_all"));
+
+        // Section 1: Open & Extraction
+        let open_section = gio::Menu::new();
+        open_section.append(Some("Open / Enter"), Some("win.open_entry"));
+        open_section.append(Some("Quick Preview (Space)"), Some("win.quick_preview"));
+        open_section.append(Some("Extract Selected..."), Some("win.extract_selected"));
+        open_section.append(Some("Extract Here"), Some("win.extract_here"));
+        menu_model.append_section(None, &open_section);
+
+        // Section 2: Archive Operations
+        let edit_section = gio::Menu::new();
+        edit_section.append(Some("Add Files..."), Some("win.add_files"));
+        edit_section.append(Some("Delete Selected"), Some("win.delete_selected"));
+        menu_model.append_section(None, &edit_section);
+
+        // Section 3: Selection & Properties
+        let select_section = gio::Menu::new();
+        select_section.append(Some("Select All"), Some("win.select_all"));
+        select_section.append(Some("Deselect All"), Some("win.deselect_all"));
+        select_section.append(Some("Properties..."), Some("win.entry_properties"));
+        menu_model.append_section(None, &select_section);
 
         let popover_menu = PopoverMenu::from_model(Some(&menu_model));
         popover_menu.set_parent(&list_box);
@@ -302,6 +321,7 @@ impl FileView {
             format!("/{}", folder.display())
         };
         self.path_label.set_text(&path_str);
+        self.path_label.set_tooltip_text(Some(&path_str));
         self.up_button.set_sensitive(!folder.as_os_str().is_empty());
     }
 
@@ -398,6 +418,10 @@ impl FileView {
             let name_label = Label::new(Some(&entry.file_name()));
             name_label.set_hexpand(true);
             name_label.set_xalign(0.0);
+            name_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            name_label.set_width_chars(1);
+            name_label.set_max_width_chars(1);
+            name_label.set_tooltip_text(Some(&entry.file_name()));
 
             let size_label = Label::new(Some(&entry.formatted_size()));
             size_label.add_css_class("dim-label");
