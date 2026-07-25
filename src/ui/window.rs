@@ -55,7 +55,20 @@ impl ZonexWindow {
         let spinner = Spinner::new();
         spinner.set_visible(false);
 
+        let menu = gio::Menu::new();
+        menu.append(Some("New Archive..."), Some("win.new_archive"));
+        menu.append(Some("Test Integrity"), Some("win.test_integrity"));
+        menu.append(Some("Delete Selected"), Some("win.delete_selected"));
+        menu.append(Some("Select All"), Some("win.select_all"));
+        menu.append(Some("Deselect All"), Some("win.deselect_all"));
+
+        let menu_button = gtk4::MenuButton::builder()
+            .icon_name("open-menu-symbolic")
+            .menu_model(&menu)
+            .build();
+
         header_bar.pack_start(&open_btn);
+        header_bar.pack_end(&menu_button);
         header_bar.pack_end(&spinner);
 
         let main_box = GtkBox::new(Orientation::Vertical, 0);
@@ -93,6 +106,86 @@ impl ZonexWindow {
             fv_deselect.deselect_all();
         });
         window.add_action(&action_deselect_all);
+
+        // ── Action: Test Integrity ──
+        let manager_integrity = manager.clone();
+        let window_c = window.clone();
+        let show_toast_integrity = show_toast_rc.clone();
+        let action_test_integrity = gio::SimpleAction::new("test_integrity", None);
+        action_test_integrity.connect_activate(move |_, _| {
+            let mgr = manager_integrity.lock().unwrap_or_else(|e| e.into_inner());
+            if mgr.current_path().is_none() {
+                show_toast_integrity("No archive currently open");
+                return;
+            }
+
+            match mgr.verify_integrity(None) {
+                Ok(report) => {
+                    if report.failed_files.is_empty() {
+                        show_toast_integrity(&format!(
+                            "✅ Integrity Check PASSED: {} file(s) verified",
+                            report.ok_files
+                        ));
+                    } else {
+                        show_toast_integrity(&format!(
+                            "❌ Integrity Check FAILED: {}/{} corrupted file(s)",
+                            report.failed_files.len(),
+                            report.total_files
+                        ));
+                    }
+                }
+                Err(err) => {
+                    let mgr_retry = manager_integrity.clone();
+                    let toast_retry = show_toast_integrity.clone();
+                    use crate::ui::dialogs::Dialogs;
+                    Dialogs::prompt_password(
+                        &window_c,
+                        &format!("Integrity check requested password. Enter password:"),
+                        move |pwd| {
+                            let mgr = mgr_retry.lock().unwrap_or_else(|e| e.into_inner());
+                            if let Ok(report) = mgr.verify_integrity(pwd.as_deref()) {
+                                if report.failed_files.is_empty() {
+                                    toast_retry(&format!("✅ Integrity Check PASSED: {} file(s) verified", report.ok_files));
+                                } else {
+                                    toast_retry(&format!("❌ Integrity Check FAILED: {}/{} error(s)", report.failed_files.len(), report.total_files));
+                                }
+                            } else {
+                                toast_retry("❌ Integrity Check FAILED: Password incorrect or corrupt format");
+                            }
+                        },
+                    );
+                }
+            }
+        });
+        window.add_action(&action_test_integrity);
+
+        // ── Action: Delete Selected ──
+        let manager_delete = manager.clone();
+        let file_view_delete = file_view.clone();
+        let show_toast_delete = show_toast_rc.clone();
+        let action_delete_selected = gio::SimpleAction::new("delete_selected", None);
+        action_delete_selected.connect_activate(move |_, _| {
+            let selected_paths = file_view_delete.get_selected_entry_paths();
+            if selected_paths.is_empty() {
+                show_toast_delete("No files selected to delete");
+                return;
+            }
+
+            let mut mgr = manager_delete.lock().unwrap_or_else(|e| e.into_inner());
+            match mgr.delete_selected_entries(&selected_paths) {
+                Ok(_) => {
+                    let visible = mgr.visible_entries();
+                    let folder = mgr.current_folder().to_path_buf();
+                    file_view_delete.set_entries(visible);
+                    file_view_delete.update_folder_path(&folder);
+                    show_toast_delete(&format!("Deleted {} item(s)", selected_paths.len()));
+                }
+                Err(err) => {
+                    show_toast_delete(&format!("Failed to delete items: {}", err));
+                }
+            }
+        });
+        window.add_action(&action_delete_selected);
 
         // Навигация по двойному клику на папку
         let manager_nav = manager.clone();
@@ -166,6 +259,21 @@ impl ZonexWindow {
                 return;
             }
 
+            // Быстрая проверка на самокопирование еще до формата и дочерних потоков
+            {
+                let mgr_check = manager_drop.lock().unwrap_or_else(|e| e.into_inner());
+                let is_self_drop = if let Some(mount_path) = mgr_check.fuse_mount_path() {
+                    paths.iter().any(|p| p.starts_with(mount_path))
+                } else {
+                    false
+                } || paths.iter().any(|p| Some(p.as_path()) == mgr_check.current_path());
+
+                if is_self_drop {
+                    tracing::info!("Drop-in ignored: files belong to the currently open archive");
+                    return;
+                }
+            }
+
             let first_path = paths[0].clone();
             let is_single = paths.len() == 1;
             let is_archive = ArchiveManager::get_engine_for_path(&first_path).is_ok();
@@ -196,31 +304,17 @@ impl ZonexWindow {
                 let has_open = mgr.current_path().is_some();
 
                 if has_open {
-                    // Проверяем, не брошены ли файлы из этого же архива (через FUSE) или сам файл архива
-                    let is_self_drop = if let Some(mount_path) = mgr.fuse_mount_path() {
-                        paths.iter().any(|p| p.starts_with(mount_path))
-                    } else {
-                        false
-                    } || paths.iter().any(|p| Some(p.as_path()) == mgr.current_path());
-
-                    if is_self_drop {
-                        visible_entries = mgr.visible_entries();
-                        current_folder = mgr.current_folder().to_path_buf();
-                        result_msg = "Selected items are already in this archive".to_string();
-                        success = false;
-                    } else {
-                        // Добавляем файлы в открытый архив
-                        match mgr.add_files(&paths) {
-                            Ok(()) => {
-                                visible_entries = mgr.visible_entries();
-                                current_folder = mgr.current_folder().to_path_buf();
-                                result_msg = format!("Added {} item(s) to open archive", paths.len());
-                                success = true;
-                            }
-                            Err(err) => {
-                                tracing::error!("Error adding files to archive: {:?}", err);
-                                result_msg = format!("Error adding files: {}", err);
-                            }
+                    // Добавляем файлы в открытый архив
+                    match mgr.add_files(&paths) {
+                        Ok(()) => {
+                            visible_entries = mgr.visible_entries();
+                            current_folder = mgr.current_folder().to_path_buf();
+                            result_msg = format!("Added {} item(s) to open archive", paths.len());
+                            success = true;
+                        }
+                        Err(err) => {
+                            tracing::error!("Error adding files to archive: {:?}", err);
+                            result_msg = format!("Error adding files: {}", err);
                         }
                     }
                 } else if is_single && is_archive {
@@ -289,17 +383,6 @@ impl ZonexWindow {
 
         // ─────────────────────────────────────────────────────────────────────
         // DRAG OUT (Zonex → Файловый менеджер): Zero-latency via FUSE
-        //
-        // Принцип: connect_prepare выполняется на ГЛАВНОМ GTK-потоке.
-        // Мы НЕ извлекаем файлы здесь. Вместо этого:
-        //   1. Берём FUSE-путь (смонтирован при open_archive — мгновенно)
-        //   2. Возвращаем виртуальный путь файловому менеджеру
-        //   3. FM читает файл → FUSE-поток извлекает байты из архива на лету
-        //   4. UI не зависает ни на миллисекунду
-        //
-        // Fallback: если libfuse3 недоступен — извлечение в tmpfs в connect_prepare
-        // с предупреждением. Но это не блокирует UI: мы используем уже открытый
-        // архив и кэш (для маленьких файлов почти мгновенно).
         // ─────────────────────────────────────────────────────────────────────
         let manager_drag = manager.clone();
         let temp_cache_drag = temp_cache.clone();
@@ -308,26 +391,21 @@ impl ZonexWindow {
 
         setup_drag_source(
             file_view.list_box(),
-            // prepare_drag_files: вызывается мгновенно в connect_prepare.
-            // При FUSE возвращает готовые виртуальные пути за ~0ms (только конкатенация строк).
             move |_, y| {
                 // Проверяем, что зажата строка (элемент), а не пустое место
                 let row = match file_view_drag.list_box().row_at_y(y as i32) {
                     Some(r) => r,
-                    None => {
-                        tracing::warn!("Drag-out ignored: drag started outside list items");
-                        return Vec::new();
-                    }
+                    None => return Vec::new(),
                 };
 
+                // Если строка не выделена (например, клик с перетаскиванием), выделяем её
                 if !row.is_selected() {
-                    tracing::warn!("Drag-out ignored: dragged row is not selected");
-                    return Vec::new();
+                    file_view_drag.list_box().unselect_all();
+                    file_view_drag.list_box().select_row(Some(&row));
                 }
 
                 let selected = file_view_drag.get_selected_entry_paths();
                 if selected.is_empty() {
-                    tracing::warn!("No entries selected for Drag-out");
                     return Vec::new();
                 }
 
@@ -557,6 +635,11 @@ impl ZonexWindow {
                             }
                         }
                     }
+                }
+                // Delete → Удалить выделенные элементы
+                gdk::Key::Delete | gdk::Key::KP_Delete => {
+                    let _ = file_view_key.widget().activate_action("win.delete_selected", None);
+                    return glib::Propagation::Stop;
                 }
                 _ => {}
             }

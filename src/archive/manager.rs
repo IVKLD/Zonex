@@ -285,6 +285,82 @@ impl ArchiveManager {
         Err(anyhow!("Failed to extract selected entries from archive"))
     }
 
+    pub fn extract_selected_with_password(
+        &self,
+        entry_paths: &[PathBuf],
+        dest_dir: &Path,
+        password: Option<&str>,
+    ) -> Result<Vec<PathBuf>> {
+        let current = self
+            .current_path
+            .as_ref()
+            .ok_or_else(|| anyhow!("No archive is currently open"))?;
+        tracing::info!(
+            "Extracting selected entries from {} to {} (password: {})",
+            current.display(),
+            dest_dir.display(),
+            password.is_some()
+        );
+
+        let engines = self.get_ordered_engines(current);
+
+        if let Some(engine) = engines.get(self.active_engine_index) {
+            if let Ok(extracted) = engine.extract_entries_with_password(current, entry_paths, dest_dir, password) {
+                if !extracted.is_empty() {
+                    return Ok(extracted);
+                }
+            }
+        }
+
+        for (i, engine) in engines.iter().enumerate() {
+            if i == self.active_engine_index {
+                continue;
+            }
+            if let Ok(extracted) = engine.extract_entries_with_password(current, entry_paths, dest_dir, password) {
+                if !extracted.is_empty() {
+                    return Ok(extracted);
+                }
+            }
+        }
+
+        Err(anyhow!("Failed to extract selected entries from archive"))
+    }
+
+    pub fn delete_selected_entries(&mut self, entry_paths: &[PathBuf]) -> Result<()> {
+        let current = self
+            .current_path
+            .as_ref()
+            .ok_or_else(|| anyhow!("No archive is currently open"))?;
+        tracing::info!(
+            "Deleting {} selected entry(ies) from {}",
+            entry_paths.len(),
+            current.display()
+        );
+
+        let engines = self.get_ordered_engines(current);
+        let engine = engines
+            .get(self.active_engine_index)
+            .ok_or_else(|| anyhow!("No active engine available for deleting entries"))?;
+
+        engine.delete_entries(current, entry_paths)?;
+        let path = current.clone();
+        self.open_archive(&path)?;
+        Ok(())
+    }
+
+    pub fn verify_integrity(&self, password: Option<&str>) -> Result<super::IntegrityReport> {
+        let current = self
+            .current_path
+            .as_ref()
+            .ok_or_else(|| anyhow!("No archive is currently open"))?;
+        let engines = self.get_ordered_engines(current);
+        let engine = engines
+            .get(self.active_engine_index)
+            .ok_or_else(|| anyhow!("No active engine available for integrity check"))?;
+
+        engine.verify_integrity(current, password)
+    }
+
     pub fn add_files(&mut self, files: &[PathBuf]) -> Result<()> {
         let current = self
             .current_path

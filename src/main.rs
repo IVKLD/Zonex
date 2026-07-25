@@ -55,6 +55,37 @@ fn main() -> glib::ExitCode {
     tracing::info!("Logs are written to stdout and /tmp/zonex.log");
     tracing::info!("==================================================");
 
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "--extract-here" {
+        use std::path::PathBuf;
+        use zonex::archive::ArchiveManager;
+        let archive_path = PathBuf::from(&args[2]);
+        if let Some(parent) = archive_path.parent() {
+            let mut mgr = ArchiveManager::new();
+            if let Ok(_) = mgr.open_archive(&archive_path) {
+                if let Ok(extracted) = mgr.extract_selected_with_password(&[], parent, None) {
+                    println!("Extracted {} file(s) to {}", extracted.len(), parent.display());
+                    return glib::ExitCode::SUCCESS;
+                }
+            }
+        }
+    } else if args.len() >= 3 && args[1] == "--compress" {
+        use std::path::PathBuf;
+        use zonex::archive::ArchiveManager;
+        let source_paths: Vec<PathBuf> = args[2..].iter().map(PathBuf::from).collect();
+        let target_name = source_paths[0]
+            .file_stem()
+            .map(|s| format!("{}.zip", s.to_string_lossy()))
+            .unwrap_or_else(|| "archive.zip".to_string());
+        let target_path = source_paths[0].with_file_name(target_name);
+
+        let mut mgr = ArchiveManager::new();
+        if let Ok(_) = mgr.create_archive(&target_path, &source_paths) {
+            println!("Compressed {} item(s) to {}", source_paths.len(), target_path.display());
+            return glib::ExitCode::SUCCESS;
+        }
+    }
+
     let app = ZonexApplication::new();
     app.run()
 }

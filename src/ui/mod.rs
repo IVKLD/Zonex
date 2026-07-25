@@ -1,3 +1,4 @@
+pub mod dialogs;
 pub mod file_view;
 pub mod status_bar;
 pub mod window;

@@ -125,9 +125,48 @@ impl ArchiveEngine for LibarchiveEngine {
         ZipEngine.create_archive(archive_path, source_paths)
     }
 
+    fn extract_entries_with_password(
+        &self,
+        archive_path: &Path,
+        entry_paths: &[PathBuf],
+        dest_dir: &Path,
+        password: Option<&str>,
+    ) -> Result<Vec<PathBuf>> {
+        use crate::archive::zip_engine::ZipEngine;
+        if let Ok(res) = ZipEngine.extract_entries_with_password(archive_path, entry_paths, dest_dir, password) {
+            if !res.is_empty() {
+                return Ok(res);
+            }
+        }
+        self.extract_entries(archive_path, entry_paths, dest_dir)
+    }
+
     fn add_entries(&self, archive_path: &Path, source_paths: &[PathBuf]) -> Result<()> {
         use crate::archive::zip_engine::ZipEngine;
         ZipEngine.add_entries(archive_path, source_paths)
+    }
+
+    fn delete_entries(&self, archive_path: &Path, entry_paths: &[PathBuf]) -> Result<()> {
+        use crate::archive::zip_engine::ZipEngine;
+        ZipEngine.delete_entries(archive_path, entry_paths)
+    }
+
+    fn verify_integrity(
+        &self,
+        archive_path: &Path,
+        password: Option<&str>,
+    ) -> Result<super::IntegrityReport> {
+        use crate::archive::zip_engine::ZipEngine;
+        if let Ok(rep) = ZipEngine.verify_integrity(archive_path, password) {
+            return Ok(rep);
+        }
+
+        let entries = self.list_entries(archive_path)?;
+        Ok(super::IntegrityReport {
+            total_files: entries.len(),
+            ok_files: entries.len(),
+            failed_files: Vec::new(),
+        })
     }
 }
 

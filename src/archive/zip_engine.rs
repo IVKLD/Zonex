@@ -354,11 +354,12 @@ impl ArchiveEngine for ZipEngine {
         }
     }
 
-    fn extract_entries(
+    fn extract_entries_with_password(
         &self,
         archive_path: &Path,
         entry_paths: &[PathBuf],
         dest_dir: &Path,
+        password: Option<&str>,
     ) -> Result<Vec<PathBuf>> {
         let file = File::open(archive_path)?;
         fs::create_dir_all(dest_dir)?;
@@ -366,7 +367,12 @@ impl ArchiveEngine for ZipEngine {
         if let Ok(mut zip) = ZipArchive::new(file) {
             let mut extracted = Vec::new();
             for i in 0..zip.len() {
-                let mut zip_file = match zip.by_index(i) {
+                let zip_file_res = match password {
+                    Some(pwd) => zip.by_index_decrypt(i, pwd.as_bytes()),
+                    None => zip.by_index(i),
+                };
+
+                let mut zip_file = match zip_file_res {
                     Ok(file) => file,
                     Err(_) => continue,
                 };
@@ -528,5 +534,100 @@ impl ArchiveEngine for ZipEngine {
 
         fs::rename(&temp_archive_path, archive_path)?;
         Ok(())
+    }
+
+    fn delete_entries(&self, archive_path: &Path, entry_paths: &[PathBuf]) -> Result<()> {
+        if entry_paths.is_empty() {
+            return Ok(());
+        }
+
+        let temp_archive_path = archive_path.with_extension("tmp_del_zip");
+
+        {
+            let src_file = File::open(archive_path)?;
+            let mut zip_in = ZipArchive::new(src_file)?;
+
+            let out_file = File::create(&temp_archive_path)?;
+            let out_buf = BufWriter::with_capacity(BUFFER_SIZE, out_file);
+            let mut zip_out = ZipWriter::new(out_buf);
+
+            let delete_targets: Vec<String> = entry_paths
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+
+            for i in 0..zip_in.len() {
+                let zip_file = match zip_in.by_index(i) {
+                    Ok(file) => file,
+                    Err(_) => continue,
+                };
+
+                let safe_name = zip_file
+                    .enclosed_name()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| zip_file.name().to_string());
+
+                let should_delete = delete_targets.iter().any(|target| {
+                    let t = target.trim_end_matches('/');
+                    safe_name == *target
+                        || safe_name == t
+                        || safe_name.starts_with(&format!("{}/", t))
+                });
+
+                if !should_delete {
+                    let _ = zip_out.raw_copy_file(zip_file);
+                }
+            }
+
+            zip_out.finish()?;
+        }
+
+        fs::rename(&temp_archive_path, archive_path)?;
+        Ok(())
+    }
+
+    fn verify_integrity(
+        &self,
+        archive_path: &Path,
+        password: Option<&str>,
+    ) -> Result<super::IntegrityReport> {
+        let file = File::open(archive_path)?;
+        let mut zip = ZipArchive::new(file)?;
+        let total_files = zip.len();
+        let mut ok_files = 0;
+        let mut failed_files = Vec::new();
+        let mut buf = [0u8; 64 * 1024];
+
+        for i in 0..total_files {
+            let zip_res = match password {
+                Some(pwd) => zip.by_index_decrypt(i, pwd.as_bytes()),
+                None => zip.by_index(i),
+            };
+
+            match zip_res {
+                Ok(mut zip_file) => {
+                    let read_err = false;
+                    while let Ok(n) = zip_file.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                    if read_err {
+                        failed_files.push((zip_file.name().to_string(), "CRC / Read mismatch".to_string()));
+                    } else {
+                        ok_files += 1;
+                    }
+                }
+                Err(err) => {
+                    failed_files.push((format!("Entry #{}", i), format!("Read error: {:?}", err)));
+                }
+            }
+        }
+
+        Ok(super::IntegrityReport {
+            total_files,
+            ok_files,
+            failed_files,
+        })
     }
 }

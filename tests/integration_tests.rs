@@ -172,3 +172,35 @@ fn test_fuse_drag_out_virtual_path_performance() {
         duration
     );
 }
+
+/// Integration Test 5: Archive Deletion and Integrity Check Verification
+#[test]
+fn test_archive_deletion_and_integrity_check() {
+    let dir = tempdir().unwrap();
+    let zip_path = dir.path().join("deletion_test.zip");
+
+    let file1 = dir.path().join("keep.txt");
+    let file2 = dir.path().join("remove.txt");
+    fs::write(&file1, "Keep this file").unwrap();
+    fs::write(&file2, "Remove this file").unwrap();
+
+    let mut mgr = ArchiveManager::new();
+    mgr.create_archive(&zip_path, &[file1.clone(), file2.clone()]).unwrap();
+
+    let initial_entries = mgr.visible_entries();
+    assert_eq!(initial_entries.len(), 2);
+
+    // Delete 'remove.txt'
+    mgr.delete_selected_entries(&[PathBuf::from("remove.txt")]).unwrap();
+
+    let remaining_entries = mgr.visible_entries();
+    assert_eq!(remaining_entries.len(), 1);
+    assert_eq!(remaining_entries[0].path, Path::new("keep.txt"));
+
+    // Verify Integrity
+    let report = mgr.verify_integrity(None).unwrap();
+    assert_eq!(report.total_files, 1);
+    assert_eq!(report.ok_files, 1);
+    assert!(report.failed_files.is_empty());
+}
+
