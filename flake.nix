@@ -14,7 +14,7 @@
           enable = lib.mkEnableOption "Zonex Wayland Archive Manager";
         };
         config = lib.mkIf config.programs.zonex.enable {
-          environment.systemPackages = [ self.packages.${pkgs.system}.default ];
+          environment.systemPackages = [ self.packages.${pkgs.stdenv.hostPlatform.system}.default ];
           programs.fuse.userAllowOther = true;
         };
       };
@@ -131,7 +131,7 @@
       nixosModules.default = nixosModule;
       nixosModules.zonex = nixosModule;
       overlays.default = final: prev: {
-        zonex = self.packages.${prev.system}.default;
+        zonex = self.packages.${prev.stdenv.hostPlatform.system}.default;
       };
     };
 }
