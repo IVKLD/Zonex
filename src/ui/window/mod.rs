@@ -57,7 +57,7 @@ impl ZonexWindow {
         let show_toast_rc = Rc::new(show_toast);
 
         let spinner_c = layout.spinner.clone();
-        let status_c = status_bar;
+        let status_c = status_bar.clone();
         let set_loading = move |loading: bool, msg: &str| {
             if loading {
                 spinner_c.start();
@@ -67,6 +67,16 @@ impl ZonexWindow {
             status_c.set_text(msg);
         };
         let set_loading_rc = Rc::new(set_loading);
+
+        let status_metrics = status_bar;
+        file_view.connect_stats_changed(move |stats| {
+            status_metrics.update_metrics(
+                stats.total_count,
+                stats.total_size,
+                stats.selected_count,
+                stats.selected_size,
+            );
+        });
 
         setup_navigation(&file_view, &manager);
 

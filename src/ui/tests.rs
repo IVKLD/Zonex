@@ -1,6 +1,9 @@
 use crate::archive::entry::format_bytes;
 use crate::archive::ArchiveEntry;
 use crate::ui::file_view::{get_icon_name_for_entry, FileView};
+use crate::ui::status_bar::StatusBar;
+use gtk4::prelude::*;
+use std::path::Path;
 
 #[test]
 fn test_mimetype_icon_resolution() {
@@ -68,11 +71,30 @@ fn test_gtk_headless_file_view_component() {
     let third = file_view.get_entry_at_index(2).unwrap();
     assert_eq!(third.file_name(), "zebra.txt");
 
+    let initial_stats = file_view.get_stats();
+    assert_eq!(initial_stats.total_count, 3);
+    assert_eq!(initial_stats.total_size, 600);
+    assert_eq!(initial_stats.selected_count, 0);
+
     file_view.select_all();
     let selected = file_view.get_selected_entry_paths();
     assert_eq!(selected.len(), 3);
 
+    let selected_stats = file_view.get_stats();
+    assert_eq!(selected_stats.selected_count, 3);
+    assert_eq!(selected_stats.selected_size, 600);
+
     file_view.deselect_all();
     let deselected = file_view.get_selected_entry_paths();
     assert_eq!(deselected.len(), 0);
+
+    file_view.update_folder_path(Path::new("nested/deep"));
+    assert!(file_view.up_button().is_sensitive());
+
+    file_view.update_folder_path(Path::new(""));
+    assert!(!file_view.up_button().is_sensitive());
+
+    let status_bar = StatusBar::new();
+    status_bar.update_metrics(10, 5 * 1024 * 1024, 2, 1024 * 1024);
+    status_bar.set_text("All systems nominal");
 }

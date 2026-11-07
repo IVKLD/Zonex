@@ -49,6 +49,15 @@ pub fn setup_navigation(file_view: &Rc<FileView>, manager: &Arc<Mutex<ArchiveMan
             sync_file_view(&file_view_fw, &mgr);
         }
     });
+
+    let manager_path = manager.clone();
+    let file_view_path = file_view.clone();
+    file_view.connect_path_navigate(move |folder| {
+        let mut mgr = manager_path.lock().unwrap_or_else(|e| e.into_inner());
+        mgr.enter_folder(folder);
+        sync_file_view(&file_view_path, &mgr);
+        file_view_path.set_forward_sensitive(false);
+    });
 }
 
 pub fn setup_open_dialog(open_btn: &Button, file_view: &Rc<FileView>, do_open: OpenCallback) {

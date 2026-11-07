@@ -10,16 +10,30 @@ pub use icons::get_icon_name_for_entry;
 use crate::archive::ArchiveEntry;
 use events::setup_events;
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Button, DropDown, Label, ListBox, PopoverMenu, SearchEntry};
+use gtk4::{
+    Box as GtkBox, Button, DropDown, Label, ListBox, PopoverMenu, ScrolledWindow, SearchEntry,
+};
 use render::render_entries;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SelectionStats {
+    pub total_count: usize,
+    pub total_size: u64,
+    pub selected_count: usize,
+    pub selected_size: u64,
+}
+
+pub type PathNavigateCallback = Rc<RefCell<Option<Box<dyn Fn(PathBuf)>>>>;
+pub type StatsChangedCallback = Rc<RefCell<Option<Box<dyn Fn(SelectionStats)>>>>;
+
 pub struct FileView {
     container: GtkBox,
     list_box: ListBox,
-    path_label: Label,
+    breadcrumb_box: GtkBox,
+    breadcrumb_scroll: ScrolledWindow,
     up_button: Button,
     forward_button: Button,
     search_entry: SearchEntry,
@@ -27,6 +41,8 @@ pub struct FileView {
     all_entries: Rc<RefCell<Vec<ArchiveEntry>>>,
     displayed_entries: Rc<RefCell<Vec<ArchiveEntry>>>,
     anchor_index: Rc<RefCell<Option<usize>>>,
+    path_navigate_cb: PathNavigateCallback,
+    stats_changed_cb: StatsChangedCallback,
     _popover_menu: PopoverMenu,
 }
 
@@ -43,13 +59,49 @@ impl FileView {
         let anchor_index: Rc<RefCell<Option<usize>>> = Rc::new(RefCell::new(None));
         let all_entries: Rc<RefCell<Vec<ArchiveEntry>>> = Rc::new(RefCell::new(Vec::new()));
         let displayed_entries: Rc<RefCell<Vec<ArchiveEntry>>> = Rc::new(RefCell::new(Vec::new()));
+        let path_navigate_cb: PathNavigateCallback = Rc::new(RefCell::new(None));
+        let stats_changed_cb: StatsChangedCallback = Rc::new(RefCell::new(None));
 
-        setup_events(&el, &all_entries, &displayed_entries, &anchor_index);
+        let stats_cb_for_events = stats_changed_cb.clone();
+        let disp_for_stats = displayed_entries.clone();
+        let list_box_for_stats = el.list_box.clone();
+
+        let notify_stats = Rc::new(move || {
+            if let Some(ref cb) = *stats_cb_for_events.borrow() {
+                let displayed = disp_for_stats.borrow();
+                let total_count = displayed.len();
+                let total_size = displayed.iter().map(|e| e.size).sum();
+
+                let selected_rows = list_box_for_stats.selected_rows();
+                let selected_count = selected_rows.len();
+                let selected_size = selected_rows
+                    .iter()
+                    .filter_map(|r| displayed.get(r.index() as usize))
+                    .map(|e| e.size)
+                    .sum();
+
+                cb(SelectionStats {
+                    total_count,
+                    total_size,
+                    selected_count,
+                    selected_size,
+                });
+            }
+        });
+
+        setup_events(
+            &el,
+            &all_entries,
+            &displayed_entries,
+            &anchor_index,
+            notify_stats,
+        );
 
         Self {
             container: el.container,
             list_box: el.list_box,
-            path_label: el.path_label,
+            breadcrumb_box: el.breadcrumb_box,
+            breadcrumb_scroll: el.breadcrumb_scroll,
             up_button: el.up_button,
             forward_button: el.forward_button,
             search_entry: el.search_entry,
@@ -57,6 +109,8 @@ impl FileView {
             all_entries,
             displayed_entries,
             anchor_index,
+            path_navigate_cb,
+            stats_changed_cb,
             _popover_menu: el.popover_menu,
         }
     }
@@ -81,15 +135,108 @@ impl FileView {
         self.forward_button.set_sensitive(sensitive);
     }
 
+    pub fn connect_path_navigate<F: Fn(PathBuf) + 'static>(&self, f: F) {
+        *self.path_navigate_cb.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub fn connect_stats_changed<F: Fn(SelectionStats) + 'static>(&self, f: F) {
+        *self.stats_changed_cb.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub fn get_stats(&self) -> SelectionStats {
+        let displayed = self.displayed_entries.borrow();
+        let total_count = displayed.len();
+        let total_size = displayed.iter().map(|e| e.size).sum();
+
+        let selected_rows = self.list_box.selected_rows();
+        let selected_count = selected_rows.len();
+        let selected_size = selected_rows
+            .iter()
+            .filter_map(|r| displayed.get(r.index() as usize))
+            .map(|e| e.size)
+            .sum();
+
+        SelectionStats {
+            total_count,
+            total_size,
+            selected_count,
+            selected_size,
+        }
+    }
+
+    pub fn notify_stats_changed(&self) {
+        if let Some(ref cb) = *self.stats_changed_cb.borrow() {
+            cb(self.get_stats());
+        }
+    }
+
     pub fn update_folder_path(&self, folder: &Path) {
-        let path_str = if folder.as_os_str().is_empty() {
-            "/".to_string()
-        } else {
-            format!("/{}", folder.display())
-        };
-        self.path_label.set_text(&path_str);
-        self.path_label.set_tooltip_text(Some(&path_str));
-        self.up_button.set_sensitive(!folder.as_os_str().is_empty());
+        while let Some(child) = self.breadcrumb_box.first_child() {
+            self.breadcrumb_box.remove(&child);
+        }
+
+        let is_root = folder.as_os_str().is_empty();
+
+        let root_btn = Button::builder()
+            .label("/")
+            .tooltip_text("Root Directory (/)")
+            .build();
+        root_btn.add_css_class("flat");
+        root_btn.add_css_class("title-4");
+        if is_root {
+            root_btn.add_css_class("heading");
+        }
+
+        let nav_cb = self.path_navigate_cb.clone();
+        root_btn.connect_clicked(move |_| {
+            if let Some(ref cb) = *nav_cb.borrow() {
+                cb(PathBuf::new());
+            }
+        });
+        self.breadcrumb_box.append(&root_btn);
+
+        if !is_root {
+            let mut accum = PathBuf::new();
+            let components: Vec<_> = folder.components().collect();
+            let count = components.len();
+
+            for (idx, comp) in components.into_iter().enumerate() {
+                let name = comp.as_os_str().to_string_lossy().to_string();
+                accum.push(&name);
+
+                let sep = Label::new(Some("/"));
+                sep.add_css_class("dim-label");
+                self.breadcrumb_box.append(&sep);
+
+                let btn = Button::builder()
+                    .label(&name)
+                    .tooltip_text(format!("/{}", accum.display()))
+                    .build();
+                btn.add_css_class("flat");
+
+                let is_last = idx == count - 1;
+                if is_last {
+                    btn.add_css_class("heading");
+                }
+
+                let nav_target = accum.clone();
+                let nav_cb_comp = self.path_navigate_cb.clone();
+                btn.connect_clicked(move |_| {
+                    if let Some(ref cb) = *nav_cb_comp.borrow() {
+                        cb(nav_target.clone());
+                    }
+                });
+                self.breadcrumb_box.append(&btn);
+            }
+        }
+
+        self.up_button.set_sensitive(!is_root);
+
+        let scroll = self.breadcrumb_scroll.clone();
+        glib::idle_add_local_once(move || {
+            let adj = scroll.hadjustment();
+            adj.set_value(adj.upper());
+        });
     }
 
     pub fn set_entries(&self, entries: Vec<ArchiveEntry>) {
@@ -107,6 +254,7 @@ impl FileView {
             &self.list_box,
             &self.anchor_index,
         );
+        self.notify_stats_changed();
     }
 
     pub fn get_entry_at_index(&self, index: usize) -> Option<ArchiveEntry> {

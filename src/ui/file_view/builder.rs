@@ -1,14 +1,15 @@
 use super::context_menu::build_context_menu;
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, DropDown, Label, ListBox, Orientation, PopoverMenu, SearchEntry,
-    SelectionMode,
+    Box as GtkBox, Button, DropDown, ListBox, Orientation, PopoverMenu, ScrolledWindow,
+    SearchEntry, SelectionMode,
 };
 
 pub struct FileViewElements {
     pub container: GtkBox,
     pub list_box: ListBox,
-    pub path_label: Label,
+    pub breadcrumb_box: GtkBox,
+    pub breadcrumb_scroll: ScrolledWindow,
     pub up_button: Button,
     pub forward_button: Button,
     pub search_entry: SearchEntry,
@@ -33,13 +34,16 @@ pub fn build() -> FileViewElements {
     forward_button.set_tooltip_text(Some("Forward (Alt+Right / Mouse Forward)"));
     forward_button.set_sensitive(false);
 
-    let path_label = Label::new(Some("/"));
-    path_label.add_css_class("title-4");
-    path_label.set_xalign(0.0);
-    path_label.set_hexpand(true);
-    path_label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
-    path_label.set_width_chars(1);
-    path_label.set_max_width_chars(1);
+    let breadcrumb_box = GtkBox::new(Orientation::Horizontal, 2);
+    breadcrumb_box.set_valign(gtk4::Align::Center);
+
+    let breadcrumb_scroll = ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Automatic)
+        .vscrollbar_policy(gtk4::PolicyType::Never)
+        .child(&breadcrumb_box)
+        .hexpand(true)
+        .valign(gtk4::Align::Center)
+        .build();
 
     let search_entry = SearchEntry::new();
     search_entry.set_placeholder_text(Some("Search files..."));
@@ -58,7 +62,7 @@ pub fn build() -> FileViewElements {
 
     nav_bar.append(&up_button);
     nav_bar.append(&forward_button);
-    nav_bar.append(&path_label);
+    nav_bar.append(&breadcrumb_scroll);
     nav_bar.append(&search_entry);
     nav_bar.append(&sort_dropdown);
     container.append(&nav_bar);
@@ -73,7 +77,7 @@ pub fn build() -> FileViewElements {
     popover_menu.set_parent(&list_box);
     popover_menu.set_has_arrow(false);
 
-    let scroll = gtk4::ScrolledWindow::builder()
+    let scroll = ScrolledWindow::builder()
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .vscrollbar_policy(gtk4::PolicyType::Automatic)
         .child(&list_box)
@@ -85,7 +89,8 @@ pub fn build() -> FileViewElements {
     FileViewElements {
         container,
         list_box,
-        path_label,
+        breadcrumb_box,
+        breadcrumb_scroll,
         up_button,
         forward_button,
         search_entry,
