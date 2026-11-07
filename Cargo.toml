@@ -1,6 +1,6 @@
 [package]
 name = "zonex"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Zonex Team"]
 description = "Wayland-native Archive Manager with Zero-Latency FUSE Drag-and-Drop"
