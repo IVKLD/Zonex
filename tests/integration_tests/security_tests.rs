@@ -110,3 +110,39 @@ fn test_corrupt_file_integrity_report() {
     assert_eq!(report.failed_files.len(), 1);
     assert_eq!(report.failed_files[0].0, "bad.txt");
 }
+
+#[test]
+fn test_multi_algorithm_encryption() {
+    use zonex::archive::EncryptionMethod;
+
+    for method in [
+        EncryptionMethod::Aes256,
+        EncryptionMethod::Aes192,
+        EncryptionMethod::Aes128,
+        EncryptionMethod::ZipCrypto,
+    ] {
+        let dir = tempdir().unwrap();
+        let zip_path = dir.path().join("test_enc.zip");
+        let file1 = dir.path().join("payload.txt");
+        fs::write(&file1, format!("Sensitive data encrypted with {:?}", method)).unwrap();
+
+        let mut mgr = ArchiveManager::new();
+        mgr.create_archive(&zip_path, std::slice::from_ref(&file1))
+            .unwrap();
+
+        mgr.encrypt_archive_with_method("algorithm_test_pass", method)
+            .unwrap();
+
+        let open_no_pwd = mgr.open_archive_with_password(&zip_path, None);
+        assert!(open_no_pwd.is_err());
+
+        let open_with_pwd = mgr
+            .open_archive_with_password(&zip_path, Some("algorithm_test_pass"))
+            .unwrap();
+        assert_eq!(open_with_pwd.len(), 1);
+
+        let report = mgr.verify_integrity(Some("algorithm_test_pass")).unwrap();
+        assert_eq!(report.ok_files, 1);
+        assert!(report.failed_files.is_empty());
+    }
+}

@@ -78,12 +78,24 @@ impl ArchiveManager {
     }
 
     pub fn encrypt_archive(&mut self, password: &str) -> Result<()> {
+        self.encrypt_archive_with_method(password, crate::archive::EncryptionMethod::default())
+    }
+
+    pub fn encrypt_archive_with_method(
+        &mut self,
+        password: &str,
+        method: crate::archive::EncryptionMethod,
+    ) -> Result<()> {
         let saved_folder = self.nav.current_folder.clone();
         let (engine, current) = self.active_engine()?;
-        tracing::info!("Encrypting open archive {}", current.display());
+        tracing::info!(
+            "Encrypting open archive {} with method {:?}",
+            current.display(),
+            method
+        );
 
         let path = current.to_path_buf();
-        engine.encrypt_archive(&path, password)?;
+        engine.encrypt_archive_with_method(&path, password, method)?;
         self.open_archive_with_password(&path, Some(password))?;
         self.nav.current_folder = saved_folder;
         Ok(())

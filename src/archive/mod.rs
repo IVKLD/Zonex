@@ -17,6 +17,26 @@ use std::path::{Path, PathBuf};
 
 pub const BUFFER_SIZE: usize = 1024 * 1024;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EncryptionMethod {
+    #[default]
+    Aes256,
+    Aes192,
+    Aes128,
+    ZipCrypto,
+}
+
+impl EncryptionMethod {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Aes256 => "AES-256 (Strongest, Recommended)",
+            Self::Aes192 => "AES-192",
+            Self::Aes128 => "AES-128",
+            Self::ZipCrypto => "ZipCrypto (Legacy Compatibility)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct IntegrityReport {
     pub total_files: usize,
@@ -65,6 +85,15 @@ pub trait ArchiveEngine: Send + Sync {
     ) -> Result<IntegrityReport>;
 
     fn encrypt_archive(&self, archive_path: &Path, password: &str) -> Result<()> {
+        self.encrypt_archive_with_method(archive_path, password, EncryptionMethod::default())
+    }
+
+    fn encrypt_archive_with_method(
+        &self,
+        archive_path: &Path,
+        password: &str,
+        _method: EncryptionMethod,
+    ) -> Result<()> {
         let _ = (archive_path, password);
         anyhow::bail!("Encryption not supported for this archive engine")
     }

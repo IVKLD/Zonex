@@ -65,6 +65,15 @@ impl ArchiveEngine for ZipEngine {
     }
 
     fn encrypt_archive(&self, archive_path: &Path, password: &str) -> Result<()> {
-        Self::encrypt(archive_path, password)
+        Self::encrypt(archive_path, password, crate::archive::EncryptionMethod::default())
+    }
+
+    fn encrypt_archive_with_method(
+        &self,
+        archive_path: &Path,
+        password: &str,
+        method: crate::archive::EncryptionMethod,
+    ) -> Result<()> {
+        Self::encrypt(archive_path, password, method)
     }
 }

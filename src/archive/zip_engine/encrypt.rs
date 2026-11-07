@@ -1,4 +1,5 @@
 use super::ZipEngine;
+use crate::archive::EncryptionMethod;
 use anyhow::Result;
 use std::fs::File;
 use std::path::Path;
@@ -8,7 +9,11 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 impl ZipEngine {
-    pub(super) fn encrypt(archive_path: &Path, password: &str) -> Result<()> {
+    pub(super) fn encrypt(
+        archive_path: &Path,
+        password: &str,
+        method: EncryptionMethod,
+    ) -> Result<()> {
         if password.is_empty() {
             return Ok(());
         }
@@ -20,9 +25,20 @@ impl ZipEngine {
         let temp_file = NamedTempFile::new_in(parent)?;
         let mut zip_out = ZipWriter::new(temp_file);
 
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .with_deprecated_encryption(password.as_bytes())?;
+        let options = match method {
+            EncryptionMethod::Aes256 => SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .with_aes_encryption(zip::AesMode::Aes256, password),
+            EncryptionMethod::Aes192 => SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .with_aes_encryption(zip::AesMode::Aes192, password),
+            EncryptionMethod::Aes128 => SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .with_aes_encryption(zip::AesMode::Aes128, password),
+            EncryptionMethod::ZipCrypto => SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .with_deprecated_encryption(password.as_bytes())?,
+        };
 
         for i in 0..zip_in.len() {
             let mut zip_file = match zip_in.by_index(i) {
