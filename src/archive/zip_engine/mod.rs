@@ -49,7 +49,20 @@ impl ArchiveEngine for ZipEngine {
     }
 
     fn add_entries(&self, archive_path: &Path, source_paths: &[PathBuf]) -> Result<()> {
-        Self::append(archive_path, source_paths)
+        Self::append(archive_path, source_paths, Path::new(""))
+    }
+
+    fn add_entries_to_folder(
+        &self,
+        archive_path: &Path,
+        source_paths: &[PathBuf],
+        target_folder: &Path,
+    ) -> Result<()> {
+        Self::append(archive_path, source_paths, target_folder)
+    }
+
+    fn create_folder(&self, archive_path: &Path, folder_path: &Path) -> Result<()> {
+        Self::create_folder(archive_path, folder_path)
     }
 
     fn delete_entries(&self, archive_path: &Path, entry_paths: &[PathBuf]) -> Result<()> {

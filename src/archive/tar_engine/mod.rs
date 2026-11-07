@@ -5,7 +5,7 @@ use super::{ArchiveEngine, ArchiveEntry, IntegrityReport};
 use anyhow::Result;
 use read::{extract_entries, list_entries, verify_integrity};
 use std::path::{Path, PathBuf};
-use write::{add_entries, create_archive, delete_entries};
+use write::{add_entries, create_archive, create_folder, delete_entries};
 
 pub enum TarCompression {
     None,
@@ -52,7 +52,20 @@ impl ArchiveEngine for TarEngine {
     }
 
     fn add_entries(&self, archive_path: &Path, source_paths: &[PathBuf]) -> Result<()> {
-        add_entries(&self.compression, archive_path, source_paths)
+        add_entries(&self.compression, archive_path, source_paths, Path::new(""))
+    }
+
+    fn add_entries_to_folder(
+        &self,
+        archive_path: &Path,
+        source_paths: &[PathBuf],
+        target_folder: &Path,
+    ) -> Result<()> {
+        add_entries(&self.compression, archive_path, source_paths, target_folder)
+    }
+
+    fn create_folder(&self, archive_path: &Path, folder_path: &Path) -> Result<()> {
+        create_folder(&self.compression, archive_path, folder_path)
     }
 
     fn delete_entries(&self, archive_path: &Path, entry_paths: &[PathBuf]) -> Result<()> {

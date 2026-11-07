@@ -74,7 +74,22 @@ pub trait ArchiveEngine: Send + Sync {
 
     fn create_archive(&self, archive_path: &Path, source_paths: &[PathBuf]) -> Result<()>;
 
-    fn add_entries(&self, archive_path: &Path, source_paths: &[PathBuf]) -> Result<()>;
+    fn add_entries(&self, archive_path: &Path, source_paths: &[PathBuf]) -> Result<()> {
+        self.add_entries_to_folder(archive_path, source_paths, Path::new(""))
+    }
+
+    fn add_entries_to_folder(
+        &self,
+        archive_path: &Path,
+        source_paths: &[PathBuf],
+        _target_folder: &Path,
+    ) -> Result<()> {
+        self.add_entries(archive_path, source_paths)
+    }
+
+    fn create_folder(&self, _archive_path: &Path, _folder_path: &Path) -> Result<()> {
+        anyhow::bail!("Creating folders is not supported for this archive format")
+    }
 
     fn delete_entries(&self, archive_path: &Path, entry_paths: &[PathBuf]) -> Result<()>;
 

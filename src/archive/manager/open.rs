@@ -50,7 +50,11 @@ pub fn open_archive_with_password(
             Err(err) => {
                 let err_msg = err.to_string();
                 let err_lower = err_msg.to_lowercase();
-                if err_lower.contains("password") || err_lower.contains("encrypted") {
+                if err_lower.contains("password")
+                    || err_lower.contains("encrypted")
+                    || err_lower.contains("passphrase")
+                    || err_lower.contains("bad decrypt")
+                {
                     return Err(err);
                 }
                 tracing::warn!(

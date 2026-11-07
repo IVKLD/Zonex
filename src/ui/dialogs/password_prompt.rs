@@ -168,3 +168,55 @@ pub fn prompt_password_full<F: FnOnce(Option<String>) + 'static>(
 
     dialog.present();
 }
+
+pub fn prompt_new_folder<F: FnOnce(Option<String>) + 'static>(
+    parent: &ApplicationWindow,
+    callback: F,
+) {
+    let dialog = MessageDialog::builder()
+        .transient_for(parent)
+        .modal(true)
+        .heading("New Folder")
+        .body("Enter name for new folder:")
+        .build();
+
+    let entry = gtk4::Entry::builder()
+        .placeholder_text("Folder name")
+        .width_request(260)
+        .text("New Folder")
+        .activates_default(true)
+        .build();
+    entry.set_margin_start(16);
+    entry.set_margin_end(16);
+    entry.set_margin_top(8);
+    entry.set_margin_bottom(8);
+
+    dialog.set_extra_child(Some(&entry));
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("create", "Create");
+    dialog.set_response_appearance("create", ResponseAppearance::Suggested);
+    dialog.set_default_response(Some("create"));
+    dialog.set_close_response("cancel");
+
+    let cb = RefCell::new(Some(callback));
+    let entry_clone = entry.clone();
+
+    entry.connect_activate({
+        let dialog = dialog.clone();
+        move |_| {
+            dialog.response("create");
+        }
+    });
+
+    dialog.connect_response(None, move |d, response| {
+        d.close();
+        if let Some(cb_fn) = cb.borrow_mut().take() {
+            let name = (response == "create")
+                .then(|| entry_clone.text().trim().to_string())
+                .filter(|s| !s.is_empty());
+            cb_fn(name);
+        }
+    });
+
+    dialog.present();
+}

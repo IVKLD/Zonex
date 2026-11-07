@@ -25,23 +25,39 @@ fn write_file_entry<W: Write + Seek>(
 fn write_sources<W: Write + Seek>(
     zip: &mut ZipWriter<W>,
     source_paths: &[PathBuf],
+    target_dir: &Path,
     options: SimpleFileOptions,
 ) -> Result<()> {
     for src in source_paths {
         if src.is_dir() {
             for entry in WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
                 let path = entry.path();
-                let name = path.strip_prefix(src.parent().unwrap_or(src))?;
-                let name_str = name.to_string_lossy().replace('\\', "/");
+                let rel = path.strip_prefix(src.parent().unwrap_or(src))?;
+                let full_rel = if target_dir.as_os_str().is_empty() {
+                    rel.to_path_buf()
+                } else {
+                    target_dir.join(rel)
+                };
+                let name_str = full_rel.to_string_lossy().replace('\\', "/");
                 if path.is_file() {
                     write_file_entry(zip, path, &name_str, options)?;
-                } else if !name.as_os_str().is_empty() {
-                    zip.add_directory(&name_str, options)?;
+                } else if !rel.as_os_str().is_empty() {
+                    let dir_str = if name_str.ends_with('/') {
+                        name_str
+                    } else {
+                        format!("{name_str}/")
+                    };
+                    zip.add_directory(&dir_str, options)?;
                 }
             }
         } else if src.is_file() {
             let name = src.file_name().ok_or_else(|| anyhow!("Invalid path"))?;
-            let name_str = name.to_string_lossy().replace('\\', "/");
+            let full_rel = if target_dir.as_os_str().is_empty() {
+                PathBuf::from(name)
+            } else {
+                target_dir.join(name)
+            };
+            let name_str = full_rel.to_string_lossy().replace('\\', "/");
             write_file_entry(zip, src, &name_str, options)?;
         }
     }
@@ -59,12 +75,16 @@ impl ZipEngine {
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-        write_sources(&mut zip, source_paths, options)?;
+        write_sources(&mut zip, source_paths, Path::new(""), options)?;
         zip.finish()?;
         Ok(())
     }
 
-    pub(super) fn append(archive_path: &Path, source_paths: &[PathBuf]) -> Result<()> {
+    pub(super) fn append(
+        archive_path: &Path,
+        source_paths: &[PathBuf],
+        target_dir: &Path,
+    ) -> Result<()> {
         if !archive_path.exists() {
             return Self::create(archive_path, source_paths);
         }
@@ -95,7 +115,14 @@ impl ZipEngine {
         let new_names: Vec<String> = source_paths
             .iter()
             .filter_map(|p| p.file_name())
-            .map(|n| n.to_string_lossy().replace('\\', "/"))
+            .map(|n| {
+                let full = if target_dir.as_os_str().is_empty() {
+                    PathBuf::from(n)
+                } else {
+                    target_dir.join(n)
+                };
+                full.to_string_lossy().replace('\\', "/")
+            })
             .collect();
 
         for i in 0..zip_in.len() {
@@ -121,7 +148,47 @@ impl ZipEngine {
             }
         }
 
-        write_sources(&mut zip_out, source_paths, options)?;
+        write_sources(&mut zip_out, source_paths, target_dir, options)?;
+        let temp_file = zip_out.finish()?;
+        temp_file.persist(archive_path)?;
+        Ok(())
+    }
+
+    pub(super) fn create_folder(archive_path: &Path, folder_path: &Path) -> Result<()> {
+        if !archive_path.exists() {
+            anyhow::bail!("Archive does not exist");
+        }
+        let src_file = File::open(archive_path)?;
+        let mut zip_in = ZipArchive::new(src_file)?;
+
+        let parent = archive_path.parent().unwrap_or_else(|| Path::new("."));
+        let temp_file = NamedTempFile::new_in(parent)?;
+        let mut zip_out = ZipWriter::new(temp_file);
+
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+        let mut folder_str = folder_path.to_string_lossy().replace('\\', "/");
+        if !folder_str.ends_with('/') {
+            folder_str.push('/');
+        }
+
+        for i in 0..zip_in.len() {
+            let zip_file = match zip_in.by_index(i) {
+                Ok(file) => file,
+                Err(_) => continue,
+            };
+            let safe_name = zip_file
+                .enclosed_name()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|| zip_file.name().replace('\\', "/"));
+
+            if safe_name != folder_str.trim_end_matches('/') && safe_name != folder_str {
+                let _ = zip_out.raw_copy_file(zip_file);
+            }
+        }
+
+        zip_out.add_directory(&folder_str, options)?;
         let temp_file = zip_out.finish()?;
         temp_file.persist(archive_path)?;
         Ok(())

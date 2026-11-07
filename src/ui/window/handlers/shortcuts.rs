@@ -24,6 +24,7 @@ pub fn setup_shortcuts(file_view: &Rc<FileView>, open_btn: &Button) -> EventCont
 
     key_controller.connect_key_pressed(move |_, key, _keycode, state| {
         let is_ctrl = state.contains(ModifierType::CONTROL_MASK);
+        let is_shift = state.contains(ModifierType::SHIFT_MASK);
         let is_alt = state.contains(ModifierType::ALT_MASK);
 
         match key {
@@ -36,9 +37,15 @@ pub fn setup_shortcuts(file_view: &Rc<FileView>, open_btn: &Button) -> EventCont
                 return Propagation::Stop;
             }
             Key::n | Key::N if is_ctrl => {
-                let _ = file_view_key
-                    .widget()
-                    .activate_action("win.new_archive", None);
+                if is_shift {
+                    let _ = file_view_key
+                        .widget()
+                        .activate_action("win.new_folder", None);
+                } else {
+                    let _ = file_view_key
+                        .widget()
+                        .activate_action("win.new_archive", None);
+                }
                 return Propagation::Stop;
             }
             Key::f | Key::F if is_ctrl => {

@@ -69,6 +69,7 @@ pub fn build(app: &Application) -> WindowLayout {
 
     let menu = Menu::new();
     menu.append(Some("New Archive..."), Some("win.new_archive"));
+    menu.append(Some("New Folder..."), Some("win.new_folder"));
     menu.append(Some("Export Selected..."), Some("win.export_selected"));
     menu.append(Some("Protect with Password..."), Some("win.set_password"));
     menu.append(Some("Test Integrity"), Some("win.test_integrity"));

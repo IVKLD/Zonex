@@ -82,4 +82,73 @@ pub fn register(ctx: &ActionsContext) {
         });
     });
     ctx.window.add_action(&action);
+
+    let mgr_nf = ctx.manager.clone();
+    let fv_nf = ctx.file_view.clone();
+    let toast_nf = ctx.show_toast.clone();
+    let sl_nf = ctx.set_loading.clone();
+    let win_nf = ctx.window.clone();
+
+    let action_new_folder = SimpleAction::new("new_folder", None);
+    action_new_folder.connect_activate(move |_, _| {
+        if mgr_nf
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .current_path()
+            .is_none()
+        {
+            toast_nf("No archive open to create folder in");
+            return;
+        }
+
+        let mgr_c = mgr_nf.clone();
+        let fv_c = fv_nf.clone();
+        let sl_c = sl_nf.clone();
+        let toast_c = toast_nf.clone();
+
+        crate::ui::dialogs::prompt_new_folder(&win_nf, move |name_opt| {
+            let Some(folder_name) = name_opt else {
+                return;
+            };
+
+            sl_c(true, "Creating new folder...");
+
+            glib::MainContext::default().spawn_local(async move {
+                let (visible, curr_dir, msg, success) = gio::spawn_blocking(move || {
+                    let mut mgr = mgr_c.lock().unwrap_or_else(|e| e.into_inner());
+                    match mgr.create_folder(&folder_name) {
+                        Ok(()) => (
+                            mgr.visible_entries(),
+                            mgr.current_folder().to_path_buf(),
+                            format!("Created folder '{folder_name}'"),
+                            true,
+                        ),
+                        Err(e) => (
+                            Vec::new(),
+                            PathBuf::new(),
+                            format!("Failed to create folder: {e}"),
+                            false,
+                        ),
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    (
+                        Vec::new(),
+                        PathBuf::new(),
+                        "Task panicked".to_string(),
+                        false,
+                    )
+                });
+
+                sl_c(false, &msg);
+                if success {
+                    fv_c.set_entries(visible);
+                    fv_c.update_folder_path(&curr_dir);
+                }
+                toast_c(&msg);
+            });
+        });
+    });
+    ctx.window.add_action(&action_new_folder);
 }

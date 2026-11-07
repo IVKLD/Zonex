@@ -155,3 +155,71 @@ fn test_large_hierarchy_navigation_cache() {
     let root_cached = mgr.visible_entries();
     assert_eq!(root_cached.len(), 10);
 }
+
+#[test]
+fn test_add_files_to_nested_subfolder() {
+    let dir = tempdir().unwrap();
+    let zip_path = dir.path().join("subfolder_add.zip");
+
+    {
+        let file = File::create(&zip_path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        zip.add_directory("documents/", SimpleFileOptions::default())
+            .unwrap();
+        zip.finish().unwrap();
+    }
+
+    let external_file = dir.path().join("quarterly.pdf");
+    fs::write(&external_file, "PDF CONTENT").unwrap();
+
+    let mut mgr = ArchiveManager::new();
+    mgr.open_archive(&zip_path).unwrap();
+
+    mgr.enter_folder(PathBuf::from("documents"));
+    assert_eq!(mgr.current_folder(), Path::new("documents"));
+    assert_eq!(mgr.visible_entries().len(), 0);
+
+    mgr.add_files(&[external_file]).unwrap();
+    assert_eq!(mgr.current_folder(), Path::new("documents"));
+
+    let doc_entries = mgr.visible_entries();
+    assert_eq!(doc_entries.len(), 1);
+    assert_eq!(doc_entries[0].file_name(), "quarterly.pdf");
+    assert_eq!(doc_entries[0].path, Path::new("documents/quarterly.pdf"));
+
+    mgr.navigate_back();
+    let root_entries = mgr.visible_entries();
+    assert_eq!(root_entries.len(), 1);
+    assert_eq!(root_entries[0].file_name(), "documents");
+}
+
+#[test]
+fn test_create_folder_in_archive() {
+    let dir = tempdir().unwrap();
+    let zip_path = dir.path().join("new_folders.zip");
+
+    {
+        let file = File::create(&zip_path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("root.txt", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"root").unwrap();
+        zip.finish().unwrap();
+    }
+
+    let mut mgr = ArchiveManager::new();
+    mgr.open_archive(&zip_path).unwrap();
+
+    mgr.create_folder("Photos").unwrap();
+    let root_entries = mgr.visible_entries();
+    assert_eq!(root_entries.len(), 2);
+    assert!(root_entries.iter().any(|e| e.file_name() == "Photos" && e.is_dir));
+
+    mgr.enter_folder(PathBuf::from("Photos"));
+    mgr.create_folder("Vacation").unwrap();
+
+    let photo_entries = mgr.visible_entries();
+    assert_eq!(photo_entries.len(), 1);
+    assert_eq!(photo_entries[0].file_name(), "Vacation");
+    assert!(photo_entries[0].is_dir);
+}

@@ -5,6 +5,7 @@ use gtk4::prelude::*;
 
 pub fn register(ctx: &ActionsContext) {
     let manager = ctx.manager.clone();
+    let file_view = ctx.file_view.clone();
     let window = ctx.window.clone();
     let show_toast = ctx.show_toast.clone();
     let set_loading = ctx.set_loading.clone();
@@ -22,6 +23,7 @@ pub fn register(ctx: &ActionsContext) {
         }
 
         let mgr_c = manager.clone();
+        let fv_c = file_view.clone();
         let toast_c = show_toast.clone();
         let sl_c = set_loading.clone();
 
@@ -36,6 +38,7 @@ pub fn register(ctx: &ActionsContext) {
                 &format!("Encrypting archive with {} in background...", method.label()),
             );
             let mgr_task = mgr_c.clone();
+            let fv_task = fv_c.clone();
             let sl_res = sl_c.clone();
             let toast_res = toast_c.clone();
 
@@ -43,10 +46,15 @@ pub fn register(ctx: &ActionsContext) {
                 let res = gio::spawn_blocking(move || {
                     let mut mgr = mgr_task.lock().unwrap_or_else(|e| e.into_inner());
                     match mgr.encrypt_archive_with_method(&pwd, method) {
-                        Ok(()) => Ok(format!(
-                            "✅ Archive successfully encrypted using {}!",
-                            method.label()
-                        )),
+                        Ok(()) => {
+                            let visible = mgr.visible_entries();
+                            let folder = mgr.current_folder().to_path_buf();
+                            let msg = format!(
+                                "✅ Archive successfully encrypted using {}!",
+                                method.label()
+                            );
+                            Ok((visible, folder, msg))
+                        }
                         Err(e) => Err(format!("Failed to encrypt archive: {}", e)),
                     }
                 })
@@ -55,7 +63,11 @@ pub fn register(ctx: &ActionsContext) {
 
                 sl_res(false, "Encryption complete");
                 match res {
-                    Ok(msg) => toast_res(&msg),
+                    Ok((visible, folder, msg)) => {
+                        fv_task.set_entries(visible);
+                        fv_task.update_folder_path(&folder);
+                        toast_res(&msg);
+                    }
                     Err(err_msg) => toast_res(&err_msg),
                 }
             });

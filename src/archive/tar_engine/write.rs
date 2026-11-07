@@ -67,10 +67,28 @@ pub fn create_archive(
     Ok(())
 }
 
+fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
+    if src.is_dir() {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)?.flatten() {
+            let child_src = entry.path();
+            let child_dst = dst.join(entry.file_name());
+            copy_recursive(&child_src, &child_dst)?;
+        }
+    } else {
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(src, dst)?;
+    }
+    Ok(())
+}
+
 pub fn add_entries(
     compression: &TarCompression,
     archive_path: &Path,
     source_paths: &[PathBuf],
+    target_dir: &Path,
 ) -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_extracted = temp_dir.path().join("existing");
@@ -79,15 +97,43 @@ pub fn add_entries(
         let _ = extract_entries(compression, archive_path, &[], &temp_extracted);
     }
 
+    let target_dest = if target_dir.as_os_str().is_empty() {
+        temp_extracted.clone()
+    } else {
+        let p = temp_extracted.join(target_dir);
+        fs::create_dir_all(&p)?;
+        p
+    };
+
     for src in source_paths {
         if let Some(name) = src.file_name() {
-            remove_path(&temp_extracted.join(name));
+            let dest_path = target_dest.join(name);
+            remove_path(&dest_path);
+            copy_recursive(src, &dest_path)?;
         }
     }
 
-    let mut all_sources = collect_dir_paths(&temp_extracted);
-    all_sources.extend_from_slice(source_paths);
+    let all_sources = collect_dir_paths(&temp_extracted);
+    create_archive(compression, archive_path, &all_sources)?;
+    Ok(())
+}
 
+pub fn create_folder(
+    compression: &TarCompression,
+    archive_path: &Path,
+    folder_path: &Path,
+) -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let temp_extracted = temp_dir.path().join("existing");
+
+    if archive_path.exists() {
+        let _ = extract_entries(compression, archive_path, &[], &temp_extracted);
+    }
+
+    let p = temp_extracted.join(folder_path);
+    fs::create_dir_all(&p)?;
+
+    let all_sources = collect_dir_paths(&temp_extracted);
     create_archive(compression, archive_path, &all_sources)?;
     Ok(())
 }

@@ -12,6 +12,7 @@ pub fn build_context_menu() -> Menu {
     menu_model.append_section(None, &open_section);
 
     let edit_section = Menu::new();
+    edit_section.append(Some("New Folder... (Ctrl+Shift+N)"), Some("win.new_folder"));
     edit_section.append(Some("Add Files..."), Some("win.add_files"));
     edit_section.append(Some("Delete Selected"), Some("win.delete_selected"));
     menu_model.append_section(None, &edit_section);

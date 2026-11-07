@@ -63,17 +63,38 @@ impl ArchiveManager {
     }
 
     pub fn add_files(&mut self, files: &[PathBuf]) -> Result<()> {
-        let saved_folder = self.nav.current_folder.clone();
+        let current_folder = self.nav.current_folder.clone();
         let (engine, current) = self.active_engine()?;
         tracing::info!(
-            "Adding {} file(s) to open archive {}",
+            "Adding {} file(s) to open archive {} into folder '{}'",
             files.len(),
+            current.display(),
+            current_folder.display()
+        );
+        let path = current.to_path_buf();
+        engine.add_entries_to_folder(&path, files, &current_folder)?;
+        self.open_archive(&path)?;
+        self.nav.current_folder = current_folder;
+        Ok(())
+    }
+
+    pub fn create_folder(&mut self, folder_name: &str) -> Result<()> {
+        let current_folder = self.nav.current_folder.clone();
+        let target_path = if current_folder.as_os_str().is_empty() {
+            PathBuf::from(folder_name)
+        } else {
+            current_folder.join(folder_name)
+        };
+        let (engine, current) = self.active_engine()?;
+        tracing::info!(
+            "Creating folder '{}' in open archive {}",
+            target_path.display(),
             current.display()
         );
         let path = current.to_path_buf();
-        engine.add_entries(&path, files)?;
+        engine.create_folder(&path, &target_path)?;
         self.open_archive(&path)?;
-        self.nav.current_folder = saved_folder;
+        self.nav.current_folder = current_folder;
         Ok(())
     }
 
