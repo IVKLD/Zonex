@@ -1,11 +1,15 @@
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Label, Orientation, ProgressBar};
+use gtk4::{Box as GtkBox, Label, Orientation};
 
 pub struct StatusBar {
     container: GtkBox,
     status_label: Label,
-    #[allow(dead_code)]
-    progress_bar: ProgressBar,
+}
+
+impl Default for StatusBar {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StatusBar {
@@ -23,17 +27,11 @@ impl StatusBar {
         status_label.set_width_chars(1);
         status_label.set_max_width_chars(1);
 
-        let progress_bar = ProgressBar::new();
-        progress_bar.set_visible(false);
-        progress_bar.set_width_request(150);
-
         container.append(&status_label);
-        container.append(&progress_bar);
 
         Self {
             container,
             status_label,
-            progress_bar,
         }
     }
 
@@ -44,15 +42,5 @@ impl StatusBar {
     pub fn set_text(&self, text: &str) {
         self.status_label.set_text(text);
         self.status_label.set_tooltip_text(Some(text));
-    }
-
-    #[allow(dead_code)]
-    pub fn set_progress(&self, visible: bool, fraction: Option<f64>, pulse: bool) {
-        self.progress_bar.set_visible(visible);
-        if pulse {
-            self.progress_bar.pulse();
-        } else if let Some(frac) = fraction {
-            self.progress_bar.set_fraction(frac);
-        }
     }
 }

@@ -20,7 +20,22 @@ check:
 
 # Run linter
 clippy:
-    nix develop --command cargo clippy
+    nix develop --command cargo clippy --all-targets
+
+# Format all Rust files according to rustfmt.toml
+fmt:
+    nix develop --command cargo fmt
+
+# Check formatting according to rustfmt.toml
+fmt-check:
+    nix develop --command cargo fmt --check
+
+# Run full project linter
+lint: fmt-check clippy
+
+# Run test suite
+test:
+    nix develop --command cargo test --all-targets
 
 # Alias for zed
 zeditor: 

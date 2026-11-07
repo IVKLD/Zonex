@@ -1,43 +1,45 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub struct RecentManager;
+fn recent_file_path() -> Option<PathBuf> {
+    let dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?
+        .join("zonex");
+    Some(dir.join("recent.txt"))
+}
 
-impl RecentManager {
-    fn config_path() -> Option<PathBuf> {
-        let home = std::env::var_os("HOME")?;
-        let dir = PathBuf::from(home).join(".config/zonex");
-        let _ = fs::create_dir_all(&dir);
-        Some(dir.join("recent.txt"))
+pub fn get_recent() -> Vec<PathBuf> {
+    let Some(path) = recent_file_path() else {
+        return Vec::new();
+    };
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    content
+        .lines()
+        .map(|l| PathBuf::from(l.trim()))
+        .filter(|p| !p.as_os_str().is_empty() && p.exists())
+        .collect()
+}
+
+pub fn add_recent(file_path: &Path) {
+    let Some(path) = recent_file_path() else {
+        return;
+    };
+    let mut list = get_recent();
+    list.retain(|p| p != file_path);
+    list.insert(0, file_path.to_path_buf());
+    list.truncate(8);
+
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
     }
-
-    pub fn get_recent() -> Vec<PathBuf> {
-        if let Some(path) = Self::config_path() {
-            if let Ok(content) = fs::read_to_string(path) {
-                return content
-                    .lines()
-                    .map(|l| PathBuf::from(l.trim()))
-                    .filter(|p| !p.as_os_str().is_empty() && p.exists())
-                    .collect();
-            }
-        }
-        Vec::new()
-    }
-
-    pub fn add_recent(file_path: &Path) {
-        let mut list = Self::get_recent();
-        let canonical = file_path.to_path_buf();
-        list.retain(|p| p != &canonical);
-        list.insert(0, canonical);
-        list.truncate(8);
-
-        if let Some(path) = Self::config_path() {
-            let content = list
-                .iter()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let _ = fs::write(path, content);
-        }
-    }
+    let content = list
+        .iter()
+        .map(|p| p.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = fs::write(path, content);
 }

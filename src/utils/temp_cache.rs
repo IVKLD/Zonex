@@ -2,53 +2,47 @@ use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
 
-/// RAM-backed tmpfs VFS staging manager for Zero-Latency Drag-and-Drop
 pub struct TempCache {
     mount_dir: PathBuf,
+    stage_dir: PathBuf,
 }
 
 impl TempCache {
     pub fn new() -> Result<Self> {
-        let user_run_dir = std::env::var("XDG_RUNTIME_DIR")
+        let base = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/run/user/1000"));
+            .filter(|p| p.exists())
+            .unwrap_or_else(std::env::temp_dir);
 
-        let base_dir = if user_run_dir.exists() {
-            user_run_dir.join("zonex_mount_ram")
-        } else {
-            PathBuf::from("/tmp/zonex_mount_ram")
-        };
-
-        let stage_dir = base_dir.join("stage");
+        let mount_dir = base.join(format!("zonex_ram_{}", std::process::id()));
+        let stage_dir = mount_dir.join("stage");
         fs::create_dir_all(&stage_dir)?;
 
         Ok(Self {
-            mount_dir: base_dir,
+            mount_dir,
+            stage_dir,
         })
     }
 
-    /// Returns persistent RAM-backed staging directory
     pub fn stage_dir(&self) -> PathBuf {
-        let stage = self.mount_dir.join("stage");
-        let _ = fs::create_dir_all(&stage);
-        stage
+        self.stage_dir.clone()
     }
 
-    /// Clears staging directory cache
+    pub fn open_cache_dir(&self) -> PathBuf {
+        let open_dir = self.mount_dir.join("open");
+        let _ = fs::create_dir_all(&open_dir);
+        open_dir
+    }
+
     pub fn clear_stage(&self) {
-        let stage = self.stage_dir();
-        if stage.exists() {
-            let _ = fs::remove_dir_all(&stage);
-            let _ = fs::create_dir_all(&stage);
-        }
+        let _ = fs::remove_dir_all(&self.stage_dir);
+        let _ = fs::create_dir_all(&self.stage_dir);
     }
 }
 
 impl Drop for TempCache {
     fn drop(&mut self) {
-        if self.mount_dir.exists() {
-            tracing::info!("Cleaning up RAM VFS mount directory: {:?}", self.mount_dir);
-            let _ = fs::remove_dir_all(&self.mount_dir);
-        }
+        tracing::info!("Cleaning up RAM VFS mount directory: {:?}", self.mount_dir);
+        let _ = fs::remove_dir_all(&self.mount_dir);
     }
 }

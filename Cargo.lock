@@ -1946,6 +1946,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "compress-tools",
+ "crc32fast",
  "flate2",
  "fuser",
  "gdk4",

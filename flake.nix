@@ -103,6 +103,7 @@
             cargo
             rustc
             clippy
+            rustfmt
             pkg-config
             just
           ];

@@ -23,6 +23,25 @@ walkdir = "2.5.0"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 compress-tools = "0.16.1"
-# FUSE virtual filesystem for zero-latency Drag OUT streaming
 fuser = "0.18.0"
 libc = "0.2"
+crc32fast = "1.4"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+style = { level = "deny", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+needless_borrow = "deny"
+explicit_iter_loop = "deny"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,21 +1,26 @@
 use crate::ui::ZonexWindow;
-use gtk4::gio;
+use gio::ApplicationFlags;
 use gtk4::prelude::*;
-use libadwaita as adw;
+use libadwaita::Application;
 use std::env;
 
 pub struct ZonexApplication {
-    app: adw::Application,
+    app: Application,
+}
+
+impl Default for ZonexApplication {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ZonexApplication {
     pub fn new() -> Self {
-        // Enforce Wayland backend
         env::set_var("GDK_BACKEND", "wayland");
 
-        let app = adw::Application::builder()
+        let app = Application::builder()
             .application_id("io.github.zonex.ArchiveManager")
-            .flags(gio::ApplicationFlags::HANDLES_OPEN)
+            .flags(ApplicationFlags::HANDLES_OPEN)
             .build();
 
         app.connect_activate(|app| {
@@ -25,10 +30,8 @@ impl ZonexApplication {
 
         app.connect_open(|app, files, _hint| {
             let window = ZonexWindow::new(app);
-            if let Some(file) = files.first() {
-                if let Some(path) = file.path() {
-                    window.open_path(path);
-                }
+            if let Some(path) = files.first().and_then(|file| file.path()) {
+                window.open_path(path);
             }
             window.present();
         });
