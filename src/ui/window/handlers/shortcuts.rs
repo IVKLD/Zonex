@@ -29,9 +29,24 @@ pub fn setup_shortcuts(file_view: &Rc<FileView>, open_btn: &Button) -> EventCont
         match key {
             Key::BackSpace | Key::Back => return trigger_button(&up_btn_key),
             Key::Left if is_alt => return trigger_button(&up_btn_key),
+            Key::Up if is_alt => return trigger_button(&up_btn_key),
             Key::Right if is_alt => return trigger_button(&fw_btn_key),
             Key::o | Key::O if is_ctrl => {
                 open_btn_key.emit_clicked();
+                return Propagation::Stop;
+            }
+            Key::n | Key::N if is_ctrl => {
+                let _ = file_view_key
+                    .widget()
+                    .activate_action("win.new_archive", None);
+                return Propagation::Stop;
+            }
+            Key::f | Key::F if is_ctrl => {
+                file_view_key.search_entry().grab_focus();
+                return Propagation::Stop;
+            }
+            Key::F5 | Key::r | Key::R if is_ctrl => {
+                file_view_key.reapply_view();
                 return Propagation::Stop;
             }
             Key::e | Key::E if is_ctrl => {
@@ -45,7 +60,18 @@ pub fn setup_shortcuts(file_view: &Rc<FileView>, open_btn: &Button) -> EventCont
                 return Propagation::Stop;
             }
             Key::Escape => {
+                if !file_view_key.search_entry().text().is_empty() {
+                    file_view_key.search_entry().set_text("");
+                    file_view_key.list_box().grab_focus();
+                    return Propagation::Stop;
+                }
                 file_view_key.deselect_all();
+                return Propagation::Stop;
+            }
+            Key::Return | Key::KP_Enter if is_alt => {
+                let _ = file_view_key
+                    .widget()
+                    .activate_action("win.entry_properties", None);
                 return Propagation::Stop;
             }
             Key::Return | Key::KP_Enter => {

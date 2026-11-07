@@ -22,6 +22,18 @@ impl FuseMountManager {
 
         let mount_name = format!("{}_{}", archive_stem, std::process::id());
         let fuse_root = runtime_dir.join("zonex_fuse");
+
+        // Clean up stale empty directories from previous sessions if any
+        if let Ok(entries) = std::fs::read_dir(&fuse_root) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        let _ = std::fs::remove_dir(entry.path());
+                    }
+                }
+            }
+        }
+
         let mount_path = fuse_root.join(&mount_name);
 
         std::fs::create_dir_all(&mount_path).map_err(|e| {

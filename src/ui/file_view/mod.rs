@@ -131,6 +131,10 @@ impl FileView {
         &self.forward_button
     }
 
+    pub fn search_entry(&self) -> &SearchEntry {
+        &self.search_entry
+    }
+
     pub fn set_forward_sensitive(&self, sensitive: bool) {
         self.forward_button.set_sensitive(sensitive);
     }

@@ -68,6 +68,28 @@ pub fn setup_open_dialog(open_btn: &Button, file_view: &Rc<FileView>, do_open: O
             let window = root_window.downcast_ref::<Window>().unwrap();
             let dialog = FileDialog::builder().title("Open Archive").build();
 
+            let filter_all_archives = gtk4::FileFilter::new();
+            filter_all_archives
+                .set_name(Some("Supported Archives (*.zip, *.tar, *.7z, *.rar, ...)"));
+            for ext in &[
+                "*.zip", "*.tar", "*.tar.gz", "*.tgz", "*.tar.zst", "*.tzst", "*.tar.bz2",
+                "*.tbz2", "*.tar.xz", "*.txz", "*.7z", "*.rar", "*.iso", "*.cab", "*.cpio",
+                "*.ar",
+            ] {
+                filter_all_archives.add_pattern(ext);
+            }
+
+            let filter_any = gtk4::FileFilter::new();
+            filter_any.set_name(Some("All Files (*.*)"));
+            filter_any.add_pattern("*");
+
+            let filters = gio::ListStore::new::<gtk4::FileFilter>();
+            filters.append(&filter_all_archives);
+            filters.append(&filter_any);
+
+            dialog.set_filters(Some(&filters));
+            dialog.set_default_filter(Some(&filter_all_archives));
+
             let do_open_c = do_open.clone();
             dialog.open(Some(window), Cancellable::NONE, move |res| {
                 if let Some(path) = res.ok().and_then(|f| f.path()) {

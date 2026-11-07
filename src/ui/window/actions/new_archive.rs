@@ -46,10 +46,40 @@ pub fn register(ctx: &ActionsContext) {
             .initial_name("archive.zip")
             .build();
 
+        let filter_zip = gtk4::FileFilter::new();
+        filter_zip.set_name(Some("ZIP Archive (*.zip)"));
+        filter_zip.add_pattern("*.zip");
+
+        let filter_tar_gz = gtk4::FileFilter::new();
+        filter_tar_gz.set_name(Some("Gzip Tarball (*.tar.gz, *.tgz)"));
+        filter_tar_gz.add_pattern("*.tar.gz");
+        filter_tar_gz.add_pattern("*.tgz");
+
+        let filter_tar_zst = gtk4::FileFilter::new();
+        filter_tar_zst.set_name(Some("Zstandard Tarball (*.tar.zst, *.tzst)"));
+        filter_tar_zst.add_pattern("*.tar.zst");
+        filter_tar_zst.add_pattern("*.tzst");
+
+        let filter_tar = gtk4::FileFilter::new();
+        filter_tar.set_name(Some("Tape Archive (*.tar)"));
+        filter_tar.add_pattern("*.tar");
+
+        let filters = gio::ListStore::new::<gtk4::FileFilter>();
+        filters.append(&filter_zip);
+        filters.append(&filter_tar_gz);
+        filters.append(&filter_tar_zst);
+        filters.append(&filter_tar);
+
+        dialog.set_filters(Some(&filters));
+        dialog.set_default_filter(Some(&filter_zip));
+
         let do_open_c = do_open.clone();
         let toast_c = show_toast.clone();
         dialog.save(Some(&window), Cancellable::NONE, move |res| {
-            if let Some(path) = res.ok().and_then(|f| f.path()) {
+            if let Some(mut path) = res.ok().and_then(|f| f.path()) {
+                if path.extension().is_none() {
+                    path.set_extension("zip");
+                }
                 let path_task = path.clone();
                 let do_open_cb = do_open_c.clone();
                 let toast_cb = toast_c.clone();
