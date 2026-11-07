@@ -10,9 +10,12 @@ run:
 build:
     nix develop --command cargo build
 
-# Build release binary
+# Build release binary and update prebuilt package
 release:
     nix develop --command cargo build --release
+    mkdir -p bin/x86_64-linux
+    cp target/release/zonex bin/x86_64-linux/zonex
+    chmod +x bin/x86_64-linux/zonex
 
 # Check code for compilation errors
 check:
